@@ -1,0 +1,25 @@
+seed: 0
+exp:
+  run: 'clean-imagenette'
+  num_epochs: 200
+  debug: false
+  wandb: true
+
+model:
+  resume: true
+
+data:
+  dataset: 'Imagenette'
+  test_dataset: 'ImagenetteC'
+  batch_size: 256
+  root: '/shared/lisabdunlap/data'
+  imagenetc_corruption: 'glass_blur'
+
+hps:
+  lr: 0.01
+  weight_decay: 5e-5
+
+noise:
+  p: 0.05
+  method: noop
+  clean_val: false

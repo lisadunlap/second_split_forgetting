@@ -68,10 +68,11 @@ for name, param in model.named_parameters():
         param.requires_grad = False
 model = nn.DataParallel(model).cuda()
 
+assert args.data.train_first_split in ['odd', 'even'], "train_first_split must be 'odd' or 'even'"
 first_split_trainloader = torch.utils.data.DataLoader(
-        train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == 0]))
+        train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'odd')]))
 second_split_trainloader = torch.utils.data.DataLoader(
-        train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == 1]))
+        train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'even')]))
 valloader = torch.utils.data.DataLoader(
         val_set, batch_size=args.data.batch_size, shuffle=False, num_workers=2)
 testloader = torch.utils.data.DataLoader(
@@ -95,7 +96,7 @@ def train_val_loop(loader, epoch, phase="train", best_acc=0, stage='first-split'
     else:
         model.eval()
     total_loss, cls_correct, total = 0, 0, 0
-    cls_true, cls_pred, cls_groups, cls_losses, idxs = np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+    cls_true, cls_pred, cls_groups, cls_conf, cls_losses, idxs = np.array([]), np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
     with torch.set_grad_enabled(phase == 'train'):
         with tqdm(total=len(loader), desc=f'{phase} epoch {epoch}') as pbar:
             for i, (inp, cls_target, cls_group, idx) in enumerate(loader):
@@ -120,6 +121,7 @@ def train_val_loop(loader, epoch, phase="train", best_acc=0, stage='first-split'
                 cls_pred = np.append(cls_pred, pred.cpu().numpy())
                 cls_groups = np.append(cls_groups, cls_group.cpu().numpy())
                 cls_losses = np.append(cls_losses, cls_loss.detach().cpu().numpy())
+                cls_conf = np.append(cls_conf, conf.detach().cpu().numpy())
                 idxs = np.append(idxs, idx.cpu().numpy())
                 pbar.update(i)
             
@@ -137,34 +139,33 @@ def train_val_loop(loader, epoch, phase="train", best_acc=0, stage='first-split'
         wandb.summary[f'{stage} best {phase} group acc'] = group_accuracy
     elif phase == 'val-split':
         # save predictions 
-        save_predictions(idxs, cls_pred, cls_true, cls_losses, epoch, stage)
+        save_predictions(idxs, cls_pred, cls_true, cls_losses, cls_conf, epoch, stage)
     elif phase == 'test':
         wandb.summary[f'{stage} {phase} acc'] = accuracy
         wandb.summary[f'{stage} {phase} balanced acc'] = balanced_acc
         wandb.summary[f'{stage} {phase} group acc'] = group_accuracy
     return best_acc if phase == 'val' else balanced_acc
 
-def save_predictions(idxs, preds, labels, losses, epoch, stage='first-split'):
+def save_predictions(idxs, preds, labels, losses, confs, epoch, stage='first-split'):
     predictions = []
-    for (i, p, l, loss) in zip(idxs, preds, labels, losses):
+    for (i, p, l, loss, c) in zip(idxs, preds, labels, losses, confs):
         predictions += [{
             "image_id": int(i),
             "stage": stage,
             "epoch": epoch,
             "label": l,
             "prediction": p,
-            "loss": loss
+            "loss": loss,
+            "conf": c
         }]
     predictions_dir = f'./predictions/{args.data.dataset}/{args.exp.run}/{stage}'
     if not os.path.exists(predictions_dir):
         os.makedirs(predictions_dir)
-    print(f'Saving predictions to {predictions_dir}/predictions-epoch_{epoch}.csv')
-    pd.DataFrame(predictions).to_csv(f'{predictions_dir}/predictions-epoch_{epoch}.csv', index=False)
-    wandb.save(f'{predictions_dir}/predictions-epoch_{epoch}.csv')
-
+    print(f'Saving predictions to {predictions_dir}/predictions-{args.data.train_first_split}-epoch_{epoch}.csv')
+    pd.DataFrame(predictions).to_csv(f'{predictions_dir}/predictions-{args.data.train_first_split}-epoch_{epoch}.csv', index=False)
+    wandb.save(f'{predictions_dir}/predictions-{args.data.train_first_split}-epoch_{epoch}.csv')
 
 def save_checkpoint(model, acc, epoch, stage='base'):
-    print(f'Saving checkpoint with acc {acc} to ./checkpoint/{args.data.dataset}/{args.exp.run}/{stage}-model_best.pth.pth')
     state = {
         "acc": acc,
         "epoch": epoch,
@@ -173,11 +174,12 @@ def save_checkpoint(model, acc, epoch, stage='base'):
     checkpoint_dir = f'./checkpoint/{args.data.dataset}/{args.exp.run}'
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
-    torch.save(state, f'{checkpoint_dir}/{stage}-model_best.pth')
-    wandb.save(f'{checkpoint_dir}/{stage}-model_best.pth')
+    print(f'Saving checkpoint with acc {acc} to {checkpoint_dir}/{stage}-{args.data.train_first_split}-model_best.pth')
+    torch.save(state, f'{checkpoint_dir}/{stage}-{args.data.train_first_split}-model_best.pth')
+    wandb.save(f'{checkpoint_dir}/{stage}-{args.data.train_first_split}-model_best.pth')
 
 def load_checkpoint(model, stage='base'):
-    path = f'./checkpoint/{args.data.dataset}/{args.exp.run}/{stage}-model_best.pth'
+    path = f'./checkpoint/{args.data.dataset}/{args.exp.run}/{stage}-{args.data.train_first_split}-model_best.pth'
     checkpoint = torch.load(path)
     model.module.load_state_dict(checkpoint['net'])
     print(f"...loaded checkpoint with acc {checkpoint['acc']}")

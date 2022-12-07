@@ -2,7 +2,7 @@
 
 My (possibly incorrect) implementation of [Characterizing Datapoints via Second-Split Forgetting](https://arxiv.org/abs/2210.15031)
 
-**Warning** I copied code from another one of my repos, so there could be some unnecessary stuff in here...
+*Warning* I copied code from another one of my repos, so there could be some unnecessary stuff in here...
 
 ## Getting Started
 

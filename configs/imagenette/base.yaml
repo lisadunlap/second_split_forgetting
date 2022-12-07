@@ -10,6 +10,7 @@ model:
 
 data:
   dataset: 'Imagenette'
+  train_first_split: 'even'
   test_dataset: 'Imagenette'
   batch_size: 256
   root: '/shared/lisabdunlap/data'

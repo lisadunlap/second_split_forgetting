@@ -144,9 +144,8 @@ def train_val_loop(loader, epoch, phase="train", best_acc=0, stage='first-split'
         wandb.summary[f'{stage} {phase} group acc'] = group_accuracy
     return best_acc if phase == 'val' else balanced_acc
 
-def save_predictions(idxs, preds, labels, losses, epoch, stage='base'):
+def save_predictions(idxs, preds, labels, losses, epoch, stage='first-split'):
     predictions = []
-    print(f'Saving predictions to ./predictions/{args.data.dataset}/{args.exp.run}/{stage}-predictions.npy')
     for (i, p, l, loss) in zip(idxs, preds, labels, losses):
         predictions += [{
             "image_id": int(i),
@@ -159,6 +158,7 @@ def save_predictions(idxs, preds, labels, losses, epoch, stage='base'):
     predictions_dir = f'./predictions/{args.data.dataset}/{args.exp.run}/{stage}'
     if not os.path.exists(predictions_dir):
         os.makedirs(predictions_dir)
+    print(f'Saving predictions to {predictions_dir}/predictions-epoch_{epoch}.csv')
     pd.DataFrame(predictions).to_csv(f'{predictions_dir}/predictions-epoch_{epoch}.csv', index=False)
     wandb.save(f'{predictions_dir}/predictions-epoch_{epoch}.csv')
 
@@ -186,9 +186,9 @@ def load_checkpoint(model, stage='base'):
 best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
 num_epochs = args.exp.num_epochs if not args.exp.debug else 1
 for epoch in range(num_epochs):
-    train_acc = train_val_loop(first_split_trainloader, epoch, phase="train", stage='base')
+    train_acc = train_val_loop(first_split_trainloader, epoch, phase="train", stage='first-split')
     best_val_acc = train_val_loop(first_split_trainloader, epoch, phase="val-split", best_acc=best_val_acc, stage='first-split')
-    best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage='second-split')
+    best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage='first-split')
     print(f"Epoch {epoch} val acc: {best_val_acc}")
 
 # load_checkpoint(model, 'first-split')

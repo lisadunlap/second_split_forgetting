@@ -68,11 +68,15 @@ for name, param in model.named_parameters():
         param.requires_grad = False
 model = nn.DataParallel(model).cuda()
 
-assert args.data.train_first_split in ['odd', 'even'], "train_first_split must be 'odd' or 'even'"
-first_split_trainloader = torch.utils.data.DataLoader(
-        train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'odd')]))
-second_split_trainloader = torch.utils.data.DataLoader(
-        train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'even')]))
+assert args.data.train_first_split in ['odd', 'even', 'all'], "train_first_split must be 'odd' or 'even'"
+if args.data.train_first_split == 'all':
+    first_split_trainloader = torch.utils.data.DataLoader(
+        train_set, shuffle=True, batch_size=args.data.batch_size, num_workers=2)
+else:
+    first_split_trainloader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'odd')]))
+    second_split_trainloader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'even')]))
 valloader = torch.utils.data.DataLoader(
         val_set, batch_size=args.data.batch_size, shuffle=False, num_workers=2)
 testloader = torch.utils.data.DataLoader(
@@ -186,23 +190,25 @@ def load_checkpoint(model, stage='base'):
 
 # first split 
 best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
+stage = 'first-split' if args.data.train_first_split != 'all' else 'all'
 num_epochs = args.exp.num_epochs if not args.exp.debug else 1
 for epoch in range(num_epochs):
-    train_acc = train_val_loop(first_split_trainloader, epoch, phase="train", stage='first-split')
-    best_val_acc = train_val_loop(first_split_trainloader, epoch, phase="val-split", best_acc=best_val_acc, stage='first-split')
-    best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage='first-split')
+    train_acc = train_val_loop(first_split_trainloader, epoch, phase="train", stage=stage)
+    best_val_acc = train_val_loop(first_split_trainloader, epoch, phase="val-split", best_acc=best_val_acc, stage=stage)
+    best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage=stage)
     print(f"Epoch {epoch} val acc: {best_val_acc}")
 
 # load_checkpoint(model, 'first-split')
 train_val_loop(testloader, epoch, phase="test", stage='first-split')
 
-# second split
-best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
-for epoch in range(num_epochs):
-    train_acc = train_val_loop(second_split_trainloader, epoch, phase="train", stage='ft')
-    best_val_acc = train_val_loop(first_split_trainloader, epoch, phase="val-split", best_acc=best_val_acc, stage='second-split')
-    best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage='second-split')
-    print(f"Epoch {epoch} val acc: {best_val_acc}")
+if args.data.train_first_split != 'all':
+    # second split
+    best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
+    for epoch in range(num_epochs):
+        train_acc = train_val_loop(second_split_trainloader, epoch, phase="train", stage='ft')
+        best_val_acc = train_val_loop(first_split_trainloader, epoch, phase="val-split", best_acc=best_val_acc, stage='second-split')
+        best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage='second-split')
+        print(f"Epoch {epoch} val acc: {best_val_acc}")
 
-# load_checkpoint(model, stage='second-split')
-train_val_loop(testloader, epoch, phase="test", stage='second-split')
+    # load_checkpoint(model, stage='second-split')
+    train_val_loop(testloader, epoch, phase="test", stage='second-split')

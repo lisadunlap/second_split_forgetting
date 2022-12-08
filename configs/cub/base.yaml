@@ -1,7 +1,7 @@
 seed: 0
 exp:
-  run: 'random-5-imagenette-woof'
-  num_epochs: 100
+  run: 'sub'
+  num_epochs: 200
   debug: false
   wandb: true
 
@@ -9,8 +9,9 @@ model:
   resume: false
 
 data:
-  dataset: 'ImagenetteWoof'
-  test_dataset: 'ImagenetteWoof'
+  dataset: 'CubDirty'
+  train_first_split: 'even'
+  test_dataset: 'CubDirty'
   batch_size: 256
   root: '/shared/lisabdunlap/data'
 
@@ -19,6 +20,6 @@ hps:
   weight_decay: 5e-5
 
 noise:
-  p: 0.05
-  method: random
+  p: 0.00
+  method: noop
   clean_val: false

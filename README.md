@@ -37,9 +37,9 @@ Right now computing FSLT and SSFT is done in a notebook, will change to be logge
 If you want to run on mislabled data, you can change `noisy.method = random`, or add in your own custom mislabeling method to methods.py and use that method name. `noise.p` is the percentage of the data to mislabel. 
 
 TODO:
-- add in wandb vis of mislabeled, rare, and hard examples []
-- add in functionality for removing specified datapoints given the csv's of the predictions []
-- add in more robustness datasets (Imagenet-A/R/O) []
-- add in method to generate more likeley mislables (proportional to commonly confused classes) []
-- add in google scraped ImageNet []
-- add in other tasks (captioning?) []
+- add in wandb vis of mislabeled, rare, and hard examples [ ]
+- add in functionality for removing specified datapoints given the csv's of the predictions [ ]
+- add in more robustness datasets (Imagenet-A/R/O) [ ]
+- add in method to generate more likeley mislables (proportional to commonly confused classes) [ ]
+- add in google scraped ImageNet [ ]
+- add in other tasks (captioning?) [ ]

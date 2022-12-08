@@ -2,6 +2,19 @@
 
 My (possibly incorrect) implementation of [Characterizing Datapoints via Second-Split Forgetting](https://arxiv.org/abs/2210.15031)
 
+Sadly their implementation came out literally an hour after I coded this, but I find this easier to iterate off of :)
+
+Here is the paper citation to give credit where credit is due:
+```
+@inproceedings{
+maini2022characterizing,
+title={Characterizing Datapoints via Second-Split Forgetting},
+author={Pratyush Maini and Saurabh Garg and Zachary Chase Lipton and J Zico Kolter},
+booktitle={Advances in Neural Information Processing Systems},
+year={2022},
+}
+```
+
 *Warning* I copied code from another one of my repos, so there could be some unnecessary stuff in here...
 
 ## Getting Started
@@ -22,3 +35,11 @@ Right now computing FSLT and SSFT is done in a notebook, will change to be logge
 ### Mislabeling Data
 
 If you want to run on mislabled data, you can change `noisy.method = random`, or add in your own custom mislabeling method to methods.py and use that method name. `noise.p` is the percentage of the data to mislabel. 
+
+TODO:
+- add in wandb vis of mislabeled, rare, and hard examples []
+- add in functionality for removing specified datapoints given the csv's of the predictions []
+- add in more robustness datasets (Imagenet-A/R/O) []
+- add in method to generate more likeley mislables (proportional to commonly confused classes) []
+- add in google scraped ImageNet []
+- add in other tasks (captioning?) []

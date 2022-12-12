@@ -14,25 +14,25 @@ imagenet_a_wnids = ['n01498041', 'n01531178', 'n01534433', 'n01558993', 'n015800
 
 class Imagenette(VisImageFolder):
 
-    transform = transforms.Compose([
-            transforms.Resize((224,224)),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
+    # transform = transforms.Compose([
+    #         transforms.Resize((224,224)),
+    #         transforms.ToTensor(),
+    #         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    #     ])
 
-    def __init__(self, root, cfg, transform=transform, split='train', type='imagenette2'):
+    def __init__(self, root, cfg, transform=None, split='train', type='imagenette2'):
         s = 'train' if split == 'train' else 'val'
-        super().__init__(os.path.join(root, type, s), transform)
+        super().__init__(os.path.join(root, type, s))
         self.split = split
         self.cfg = cfg
-        if split == 'val':
-            sample_idxs = [i for i in range(len(self.samples)) if i % 2 == 0]
-        elif split == 'test':
-            sample_idxs = [i for i in range(len(self.samples)) if i % 2 == 1]
-        else:
-            sample_idxs = [i for i in range(len(self.samples))]
-        self.samples = [self.samples[i] for i in sample_idxs]
-        self.labels = [s[1] for s in self.samples]
+        # if split == 'val':
+        #     sample_idxs = [i for i in range(len(self.samples)) if i % 2 == 0]
+        # elif split == 'test':
+        #     sample_idxs = [i for i in range(len(self.samples)) if i % 2 == 1]
+        # else:
+        #     sample_idxs = [i for i in range(len(self.samples))]
+        # self.samples = [self.samples[i] for i in sample_idxs]
+        # self.labels = [s[1] for s in self.samples]
 
 class ImagenetteWoof(Imagenette):
 

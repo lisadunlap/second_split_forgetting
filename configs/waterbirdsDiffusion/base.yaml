@@ -1,0 +1,7 @@
+exp:
+  run: 'waterbirds-diffusion'
+
+data:
+  dataset: 'WaterbirdsDiffusion'
+  test_dataset: Waterbirds95
+  root: '/shared/lisabdunlap/vl-attention/data'

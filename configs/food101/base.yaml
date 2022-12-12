@@ -1,0 +1,9 @@
+exp:
+  run: 'food101'
+  num_epochs: 200
+
+data:
+  dataset: 'Food101'
+  test_dataset: 'Food101'
+  train_first_split: 'even'
+

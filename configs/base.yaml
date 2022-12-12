@@ -4,15 +4,17 @@ exp:
   num_epochs: 200
   debug: false
   wandb: true
+  train_first_split_only: false
 
 model:
   resume: false
   ft: false
   save_every: 1
   resume_epoch: 'best'
+  eval: false
 
 data:
-  dataset: 'Waterbirds'
+  dataset: 'Waterbirds100'
   train_first_split: 'even'
   test_dataset: 'Waterbirds'
   batch_size: 256

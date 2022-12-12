@@ -1,0 +1,7 @@
+exp:
+  run: waterbirds95
+
+data:
+  dataset: Waterbirds95
+  test_dataset: Waterbirds95
+  root: '/shared/lisabdunlap/vl-attention/data'

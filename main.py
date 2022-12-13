@@ -21,7 +21,6 @@ from datasets.get_dataset import get_dataset
 from datasets.base import BaseDataset
 from utils import evaluate
 import removal_methods
-import methods
 
 parser = argparse.ArgumentParser(description='Train/Val')
 parser.add_argument('--config', default='configs/base.yaml', help="config file")

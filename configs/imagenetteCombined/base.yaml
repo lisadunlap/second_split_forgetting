@@ -1,0 +1,9 @@
+exp:
+  run: expanded_imagenette
+
+data:
+  dataset: ExpandedImagenette
+  test_dataset: ExpandedImagenette
+
+model:
+  arch: resnet18

@@ -36,9 +36,20 @@ Right now computing FSLT and SSFT is done in a notebook, will change to be logge
 
 If you want to run on mislabled data, you can change `noisy.method = random`, or add in your own custom mislabeling method to methods.py and use that method name. `noise.p` is the percentage of the data to mislabel. 
 
+## Remove Samples (beta)
+
+To test out the different metrics for determaning mislabled examples, set `data.remove = true` and define `data.num_samples_to_remove`, `data.removal_method`, and `data.results_dir`. The available removal methods are in [removal_methods.py](removal_methods.py).
+
+Note that you need to train a model on this dataset beforehand (duh).
+
+ex.
+```
+python main.py --config configs/waterbirds/base.yaml data.remove = true data.results_dir = predictions/Waterbirds95/waterbirds95/first-split data.samples_to_remove = 0.1 data.removal_method = high_loss
+```
+
 TODO:
 - add in wandb vis of mislabeled, rare, and hard examples [ ]
-- add in functionality for removing specified datapoints given the csv's of the predictions [ ]
+- add in functionality for removing specified datapoints given the csv's of the predictions [X]
 - add in more robustness datasets (Imagenet-A/R/O) [ ]
 - add in method to generate more likeley mislables (proportional to commonly confused classes) [ ]
 - add in google scraped ImageNet [ ]

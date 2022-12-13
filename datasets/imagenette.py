@@ -4,6 +4,7 @@ import torch
 import json
 import pandas as pd
 from PIL import Image
+import numpy as np
 
 import torchvision.transforms as transforms
 from torchvision.datasets import ImageFolder
@@ -14,25 +15,12 @@ imagenet_a_wnids = ['n01498041', 'n01531178', 'n01534433', 'n01558993', 'n015800
 
 class Imagenette(VisImageFolder):
 
-    # transform = transforms.Compose([
-    #         transforms.Resize((224,224)),
-    #         transforms.ToTensor(),
-    #         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    #     ])
-
     def __init__(self, root, cfg, transform=None, split='train', type='imagenette2'):
         s = 'train' if split == 'train' else 'val'
         super().__init__(os.path.join(root, type, s))
         self.split = split
+        self.groups = [0] * len(self.samples)
         self.cfg = cfg
-        # if split == 'val':
-        #     sample_idxs = [i for i in range(len(self.samples)) if i % 2 == 0]
-        # elif split == 'test':
-        #     sample_idxs = [i for i in range(len(self.samples)) if i % 2 == 1]
-        # else:
-        #     sample_idxs = [i for i in range(len(self.samples))]
-        # self.samples = [self.samples[i] for i in sample_idxs]
-        # self.labels = [s[1] for s in self.samples]
 
 class ImagenetteWoof(Imagenette):
 
@@ -62,6 +50,36 @@ class NoisyImagenette(Imagenette):
         self.labels = self.df[f"noisy_labels_{self.cfg.noise.p}"].tolist()
         self.image_paths = [path.replace('val/', '').replace('train/', '') for path in self.df['path']]
         self.samples = list(zip(self.df['path'].tolist(), self.labels))
+
+class ExpandedImagenette(ImagenetteWoof):
+
+    transform = transforms.Compose([
+            transforms.Resize((224,224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+
+    class_proportions = [1.0, 1.0, 1.0, 1.0, 0.5, 0.25, 0.1, 0.01, 0.001, 0.0001]
+
+    def __init__(self, root, cfg, transform=transform, split='train', type='imagenette2'):
+        super().__init__(root, cfg=cfg, transform=transform, type=type)
+        if split == 'train':
+            self.samples, self.groups = self.remove_samples()
+        else:
+            self.groups = [l for s, l in self.samples]
+            self.samples = [(s, 1) for s, l in self.samples]
+        self.labels = [s[1] for s in self.samples]
+
+    def remove_samples(self):
+        """
+        Create class imbalance by removing samples w.p. class_proportions.
+        """
+        samples, groups = [], []
+        for i in range(len(self.samples)):
+            if np.random.rand() < self.class_proportions[self.labels[i]]:
+                samples.append((self.samples[i][0], 1))
+                groups.append(self.labels[i])
+        return samples, groups
 
 class ImagenetteC(VisImageFolder):
 

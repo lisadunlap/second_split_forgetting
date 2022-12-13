@@ -2,7 +2,7 @@ import torch
 import numpy as np
 
 from datasets.waterbirds import Waterbirds100, Waterbirds95, WaterbirdsDiffusion
-from datasets.imagenette import Imagenette, ImagenetteWoof, NoisyImagenette, ImagenetteC
+from datasets.imagenette import Imagenette, ImagenetteWoof, NoisyImagenette, ImagenetteC, ExpandedImagenette
 from datasets.cub import Cub2011, Cub2011Painting
 from datasets.base import CombinedDataset, SubsetDataset
 from datasets.food101 import Food101
@@ -44,5 +44,9 @@ def get_dataset(name, cfg, split='train'):
         return Waterbirds100(root=cfg.data.root, split=split)
     elif name == 'Food101':
         return Food101(root=cfg.data.root, split=split)
+    elif name == 'ExpandedImagenette':
+        imagenette = Imagenette(root=cfg.data.root, cfg=cfg, split=split)
+        imagenette_woof = ExpandedImagenette(root=cfg.data.root, cfg=cfg, split=split)
+        return CombinedDataset([imagenette, imagenette_woof])
     else:
         raise ValueError(f"Dataset {name} not supported")

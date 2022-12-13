@@ -18,8 +18,11 @@ data:
   train_first_split: 'even'
   test_dataset: 'Waterbirds'
   batch_size: 256
-  root: '/shared/lisabdunlap/vl-attention/data'
+  root: '/shared/lisabdunlap/data'
   imagenetc_corruption: 'glass_blur'
+  remove: false
+  num_samples_to_remove: 0.1 # could either be a proportion or a set number
+  removal_method: random
 
 hps:
   lr: 0.001

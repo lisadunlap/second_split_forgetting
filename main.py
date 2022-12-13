@@ -7,6 +7,7 @@ import copy
 import pandas as pd
 
 from torchvision.models import resnet50, ResNet50_Weights
+import torchvision.models as models
 import torchvision.transforms as transforms
 import torch.utils.data as data
 
@@ -19,6 +20,7 @@ from utils import read_unknowns, nest_dict, flatten_config
 from datasets.get_dataset import get_dataset
 from datasets.base import BaseDataset
 from utils import evaluate
+import removal_methods
 import methods
 
 parser = argparse.ArgumentParser(description='Train/Val')
@@ -58,8 +60,12 @@ labels = np.array(train_set.labels) == np.array(train_set.clean_labels)
 p = args.noise.p if args.noise.method != 'noop' else 0
 print(f"Training {args.exp.run} on {args.data.dataset} with {p*100}% {args.noise.method} noise ({len(labels[labels == False])}/{len(labels)})")
 
-pretrained_weights = ResNet50_Weights.IMAGENET1K_V2 if args.model.ft else ResNet50_Weights.DEFAULT
-model = resnet50(weights=pretrained_weights).cuda()
+# Load model
+pretrained_weights = None
+if args.model.ft:
+    assert args.model.arch == 'resnet50', "Only resnet50 is supported for fine-tuning"
+    pretrained_weights = ResNet50_Weights.IMAGENET1K_V2
+model = getattr(models, args.model.arch)(weights=pretrained_weights).cuda()
 num_classes, dim = model.fc.weight.shape
 model.fc = nn.Linear(dim, len(train_set.classes)).cuda()
 for name, param in model.named_parameters():
@@ -69,20 +75,28 @@ for name, param in model.named_parameters():
         param.requires_grad = False
 model = nn.DataParallel(model).cuda()
 
+# Load dataset
 assert args.data.train_first_split in ['odd', 'even', 'all'], "train_first_split must be 'odd' or 'even'"
 if args.data.train_first_split == 'all':
     first_split_trainloader = torch.utils.data.DataLoader(
         train_set, shuffle=True, batch_size=args.data.batch_size, num_workers=2)
-elif args.data.train_first_split == 'removed':
-    removed_idxs = []
-    sampler = data.SubsetRandomSampler([i for i in range(len(train_set)) if i not in removed_idxs])
-    first_split_trainloader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.data.batch_size, num_workers=2, sampler=sampler)
 else:
     first_split_trainloader = torch.utils.data.DataLoader(
             train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'odd')]))
     second_split_trainloader = torch.utils.data.DataLoader(
             train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'even')]))
+
+# Remove samples from the train set
+if args.data.remove:
+    assert os.path.exists(args.data.results_dir), f"Results directory {args.data.results_dir} does not exist"
+    df = pd.concat([pd.read_csv(f) for f in os.listdir(args.data.results_dir)])
+    num_samples = args.data.num_samples_to_remove if args.data.num_samples_to_remove > 0 else int(args.data.num_samples_to_remove * len(train_set))
+    removed_idxs = getattr(removal_methods, args.data.removal_method)(args, df, num_samples)
+    print(f"Removing {len(removed_idxs)} samples from first split via {args.data.removal_method}")
+    sampler = data.SubsetRandomSampler([i for i in range(len(train_set)) if i not in removed_idxs])
+    first_split_trainloader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.data.batch_size, num_workers=2, sampler=sampler)
+
 trainloader = torch.utils.data.DataLoader(
         train_set, batch_size=args.data.batch_size, shuffle=False, num_workers=2)
 valloader = torch.utils.data.DataLoader(
@@ -205,9 +219,9 @@ if args.model.eval:
     load_checkpoint(model, 'first-split')
     train_val_loop(valloader, 0, phase="val", stage='first-split')
     best_val_acc = train_val_loop(trainloader, 'best', phase="val-all", stage='first-split')
-
-# first split 
+ 
 if not args.model.eval:
+    # first split
     best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
     stage = 'first-split' if args.data.train_first_split != 'all' else 'all'
     num_epochs = args.exp.num_epochs if not args.exp.debug else 1

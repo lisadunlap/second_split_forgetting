@@ -74,22 +74,18 @@ class CombinedDataset:
     """
     def __init__(self, datasets):
         self.datasets = datasets
-        print(datasets[0].samples[0])
-        print(datasets[1].samples[0])
         self.samples = list(np.concatenate([d.samples for d in self.datasets]))
         # what dataset does this sample belong to
         self.dataset_idx = list(np.concatenate([np.full(len(d), i) for i, d in enumerate(self.datasets)]))
         
         # what the index of that dataset is for this sample
         self.idxs = list(np.concatenate([np.arange(len(d)) for d in self.datasets]))
-        print("HAS ATTR GROUPS: ", hasattr(datasets[0], 'groups'))
         if hasattr(datasets[0], 'groups'):
             assert all([hasattr(d, 'groups') for d in self.datasets]), 'All datasets must have groups attribute' 
             self.filenames, self.labels = [s[0] for s in self.samples], [int(s[1]) for s in self.samples]
             self.groups = np.concatenate([np.array(d.groups) for d in self.datasets])
         else:
             self.filenames, self.labels, self.groups = [s[0] for s in self.samples], [int(s[1]) for s in self.samples], [int(s[2]) for s in self.samples]
-            print(len(self.samples))
         self.class_weights = get_counts(self.labels)
         self.classes = np.sort(np.unique(np.concatenate([np.array(d.classes) for d in self.datasets])))
         self.transforms = [d.transform for d in self.datasets]
@@ -101,13 +97,6 @@ class CombinedDataset:
         didx = self.dataset_idx[idx]
         dataset = self.datasets[didx]
         item = list(dataset[self.idxs[idx]])
-        # file, label = self.filenames[idx], self.labels[idx]
-        # group = self.groups[idx]
-
-        # inp = Image.open(file).convert('RGB')
-        # if self.transforms[didx]:
-        #     inp = self.transforms[didx](inp)
-        # print(type(item[1]))
         if item[0].shape != torch.Size([3, 224, 224]):
             print(item[0].shape)
         if len(item) == 2:
@@ -116,8 +105,6 @@ class CombinedDataset:
             return item[0], item[1], item[2], idx
         else:
             return item[0], item[1], item[2], idx
-        # print(inp.shape, type(label), group)
-        # return inp, np.int64(label), group, idx
 
 class SubsetDataset:
     """

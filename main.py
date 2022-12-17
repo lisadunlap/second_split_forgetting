@@ -18,7 +18,7 @@ import wandb
 
 from utils import read_unknowns, nest_dict, flatten_config
 from datasets.get_dataset import get_dataset
-from datasets.base import BaseDataset
+from datasets.base import BaseDataset, get_sampler
 from utils import evaluate
 import removal_methods
 
@@ -47,6 +47,8 @@ if not args.exp.wandb:
     os.environ['WANDB_SILENT']="true"
 
 run = f"{args.exp.run}-debug" if args.exp.debug else args.exp.run
+if args.exp.debug:
+    run = 'debug'
 wandb.init(entity='lisadunlap', project='second_split', name=run, config=flatten_config(args))
 print(f"DATASET {args.data.dataset}")
 
@@ -60,10 +62,7 @@ p = args.noise.p if args.noise.method != 'noop' else 0
 print(f"Training {args.exp.run} on {args.data.dataset} with {p*100}% {args.noise.method} noise ({len(labels[labels == False])}/{len(labels)})")
 
 # Load model
-pretrained_weights = None
-if args.model.ft:
-    assert args.model.arch == 'resnet50', "Only resnet50 is supported for fine-tuning"
-    pretrained_weights = ResNet50_Weights.IMAGENET1K_V2
+pretrained_weights = 'IMAGENET1K_V1' if args.model.ft else None
 model = getattr(models, args.model.arch)(weights=pretrained_weights).cuda()
 num_classes, dim = model.fc.weight.shape
 model.fc = nn.Linear(dim, len(train_set.classes)).cuda()
@@ -74,26 +73,36 @@ for name, param in model.named_parameters():
         param.requires_grad = False
 model = nn.DataParallel(model).cuda()
 
-# Load dataset
-assert args.data.train_first_split in ['odd', 'even', 'all'], "train_first_split must be 'odd' or 'even'"
-if args.data.train_first_split == 'all':
-    first_split_trainloader = torch.utils.data.DataLoader(
-        train_set, shuffle=True, batch_size=args.data.batch_size, num_workers=2)
-else:
-    first_split_trainloader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'odd')]))
-    second_split_trainloader = torch.utils.data.DataLoader(
-            train_set, batch_size=args.data.batch_size, num_workers=2, sampler=data.SubsetRandomSampler([i for i in range(len(train_set)) if i % 2 == (args.data.train_first_split == 'even')]))
+
 
 # Remove samples from the train set
 if args.data.remove:
     assert os.path.exists(args.data.results_dir), f"Results directory {args.data.results_dir} does not exist"
     df = pd.concat([pd.read_csv(f) for f in os.listdir(args.data.results_dir)])
     num_samples = args.data.num_samples_to_remove if args.data.num_samples_to_remove > 0 else int(args.data.num_samples_to_remove * len(train_set))
-    removed_idxs = getattr(removal_methods, args.data.removal_method)(args, df, num_samples)
+    removed_idxs, upweight_idxs = getattr(removal_methods, args.data.removal_method)(args, df, num_samples)
     print(f"Removing {len(removed_idxs)} samples from first split via {args.data.removal_method}")
-    sampler = data.SubsetRandomSampler([i for i in range(len(train_set)) if i not in removed_idxs])
+    print(f"Upweighting {len(upweight_idxs)} samples from second split via {args.data.removal_method}")
+if args.exp.oracle:
+    assert args.data.dataset == 'ExpandedImagenette', "Oracle only works with ExpandedImagenette"
+    idxs, groups = train_set.dataset.datasets[1].get_upweight_samples()
+    removed_idxs, upweight_idxs = train_set.noisy_idxs, idxs
+else:
+    removed_idxs, upweight_idxs = [], []
+
+# get sampler (for removing/upweighting samples)
+sampler = get_sampler(args, train_set, removed_idxs, upweight_idxs)
+
+
+# Load dataset
+assert args.data.train_first_split in ['odd', 'even', 'all'], "train_first_split must be 'odd' or 'even'"
+if args.data.train_first_split == 'all':
     first_split_trainloader = torch.utils.data.DataLoader(
+        train_set, batch_size=args.data.batch_size, num_workers=2, sampler=sampler)
+else:
+    first_split_trainloader = torch.utils.data.DataLoader(
+            train_set, batch_size=args.data.batch_size, num_workers=2, sampler=sampler)
+    second_split_trainloader = torch.utils.data.DataLoader(
             train_set, batch_size=args.data.batch_size, num_workers=2, sampler=sampler)
 
 trainloader = torch.utils.data.DataLoader(
@@ -102,11 +111,9 @@ valloader = torch.utils.data.DataLoader(
         val_set, batch_size=args.data.batch_size, shuffle=False, num_workers=2)
 testloader = torch.utils.data.DataLoader(
         test_set, batch_size=args.data.batch_size, shuffle=False, num_workers=2)
-# clean_val_loader = torch.utils.data.DataLoader(
-#         clean_val_set, batch_size=args.data.batch_size, shuffle=False, num_workers=2)
 
-class_criterion = nn.CrossEntropyLoss(weight=weights.cuda())
-class_criterion_per = nn.CrossEntropyLoss(weight=weights.cuda(), reduction='none')
+class_criterion = nn.CrossEntropyLoss()
+class_criterion_per = nn.CrossEntropyLoss(reduction='none')
 m = nn.Softmax(dim=1)
 optimizer = torch.optim.SGD(model.parameters(), lr=args.hps.lr, weight_decay=args.hps.weight_decay, momentum=0.9)
 # iters_per_epoch = len(first_split_trainloader)+1
@@ -154,9 +161,10 @@ def train_val_loop(loader, epoch, phase="train", best_acc=0, stage='first-split'
                 pbar.update(i)
             
     accuracy, balanced_acc, class_accuracy, group_accuracy =  evaluate(cls_pred, cls_true, cls_groups)
+    print("group accuracy", group_accuracy)
 
     wandb.log({f"{stage} {phase} loss": total_loss, f"{stage} {phase} cls acc": accuracy, f"{stage} {phase} balanced class acc": balanced_acc, 
-                f"{stage} {phase} class acc": class_accuracy, f"{stage} {phase} group acc": group_accuracy})
+                f"{stage} {phase} class acc": class_accuracy, f"{stage} {phase} group acc": group_accuracy, "epoch": epoch})
 
     if phase == 'val' and balanced_acc > best_acc:
         print(stage, balanced_acc, best_acc)
@@ -165,13 +173,14 @@ def train_val_loop(loader, epoch, phase="train", best_acc=0, stage='first-split'
         wandb.summary[f'{stage} best {phase} acc'] = accuracy
         wandb.summary[f'{stage} best {phase} balanced acc'] = balanced_acc
         wandb.summary[f'{stage} best {phase} group acc'] = group_accuracy
-    elif phase == 'val-split' or phase == 'val-all':
-        # save predictions 
-        save_predictions(idxs, cls_pred, cls_true, cls_groups, cls_losses, cls_conf, epoch, stage, phase)
+        wandb.summary[f'{stage} best {phase} epoch'] = epoch
     elif phase == 'test':
         wandb.summary[f'{stage} {phase} acc'] = accuracy
         wandb.summary[f'{stage} {phase} balanced acc'] = balanced_acc
         wandb.summary[f'{stage} {phase} group acc'] = group_accuracy
+    if phase != 'train' and epoch % args.model.save_every == 0:
+    # save predictions 
+        save_predictions(idxs, cls_pred, cls_true, cls_groups, cls_losses, cls_conf, epoch, stage, phase)
     return best_acc if phase == 'val' else balanced_acc
 
 def save_predictions(idxs, preds, labels, groups, losses, confs, epoch, stage='first-split', phase='val-split'):
@@ -215,9 +224,12 @@ def load_checkpoint(model, stage='base'):
     print(f"...loaded checkpoint with acc {checkpoint['acc']}")
 
 if args.model.eval:
-    load_checkpoint(model, 'first-split')
-    train_val_loop(valloader, 0, phase="val", stage='first-split')
-    best_val_acc = train_val_loop(trainloader, 'best', phase="val-all", stage='first-split')
+    print("------ EVAL ONLY ------")
+    load_checkpoint(model, 'all')
+    best_val_acc = train_val_loop(valloader, 0, phase="val", stage='best')
+    best_test_acc = train_val_loop(testloader, 0, phase="test", stage='best')
+    wandb.summary['best val acc'] = best_val_acc
+    wandb.summary['test acc'] = best_test_acc
  
 if not args.model.eval:
     # first split
@@ -226,20 +238,21 @@ if not args.model.eval:
     num_epochs = args.exp.num_epochs if not args.exp.debug else 1
     for epoch in range(num_epochs):
         train_acc = train_val_loop(first_split_trainloader, epoch, phase="train", stage=stage)
-        _ = train_val_loop(first_split_trainloader, epoch, phase="val-split", best_acc=best_val_acc, stage=stage)
-        _ = train_val_loop(trainloader, epoch, phase="val-all", best_acc=best_val_acc, stage=stage)
+        if epoch % args.model.save_every == 0:
+            _ = train_val_loop(trainloader, epoch, phase="eval-train", best_acc=best_val_acc, stage=stage)
         best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage=stage)
         print(f"Epoch {epoch} val acc: {best_val_acc}")
 
     # load_checkpoint(model, 'first-split')
-    train_val_loop(testloader, epoch, phase="test", stage='first-split')
+    train_val_loop(testloader, epoch, phase="test", stage=stage)
 
     if args.data.train_first_split != 'all' and not args.exp.train_first_split_only:
         # second split
         best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
         for epoch in range(num_epochs):
             train_acc = train_val_loop(second_split_trainloader, epoch, phase="train", stage='ft')
-            _ = train_val_loop(first_split_trainloader, epoch, phase="val-split", best_acc=best_val_acc, stage='second-split')
+            if epoch % args.model.save_every == 0:
+                _ = train_val_loop(first_split_trainloader, epoch, phase="eval-first-split", best_acc=best_val_acc, stage='second-split')
             best_val_acc = train_val_loop(valloader, epoch, phase="val", best_acc=best_val_acc, stage='second-split')
             print(f"Epoch {epoch} val acc: {best_val_acc}")
 

@@ -1,0 +1,12 @@
+exp:
+  run: domainnet-v2
+
+data: 
+  dataset: DomainNetV2
+  test_dataset: DomainNetV2
+  batch_size: 512
+
+model:
+  arch: resnet50
+  ft: true
+  

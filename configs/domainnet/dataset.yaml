@@ -1,0 +1,23 @@
+dataset:
+  source:
+  - clipart
+  - infograph
+  - painting
+  - real
+  target:
+  - clipart
+  - infograph
+  - painting
+  - real
+  classes: 
+    # file: datasets/domainnet_furniture_classes.txt
+    file: false
+    class_list:
+    - 'streetlight'
+    - 'table'
+    - 'vase'
+    - 'suitcase'
+    - 'teapot'
+    - 'wine_glass'
+    - 'pillow'
+    - 'umbrella'

@@ -6,6 +6,8 @@ from datasets.imagenette import Imagenette, ImagenetteWoof, NoisyImagenette, Ima
 from datasets.cub import Cub2011, Cub2011Painting
 from datasets.base import CombinedDataset, SubsetDataset
 from datasets.food101 import Food101
+from datasets.domain_net import DomainNet
+from omegaconf import OmegaConf
 
 def get_dataset(name, cfg, split='train'):
     """
@@ -48,5 +50,15 @@ def get_dataset(name, cfg, split='train'):
         imagenette = Imagenette(root=cfg.data.root, cfg=cfg, split=split)
         imagenette_woof = ExpandedImagenette(root=cfg.data.root, cfg=cfg, split=split)
         return CombinedDataset([imagenette, imagenette_woof])
+    elif name == 'DomainNetV1':
+        data_cfg = OmegaConf.load('configs/domainnet/dataset.yaml')
+        if split == 'train':
+            return DomainNet(f'{cfg.data.root}/domainnet_noisy', data_cfg, domains=data_cfg.dataset.source, split=split)
+        return DomainNet(f'{cfg.data.root}/domainnet', data_cfg, domains=data_cfg.dataset.target, split=split)
+    elif name == 'DomainNetV2':
+        data_cfg = OmegaConf.load('configs/domainnet/dataset.yaml')
+        if split == 'train':
+            return DomainNet(f'{cfg.data.root}/domainnet', data_cfg, domains=data_cfg.dataset.source, split=split)
+        return DomainNet(f'{cfg.data.root}/domainnet', data_cfg, domains=data_cfg.dataset.target, split=split)
     else:
         raise ValueError(f"Dataset {name} not supported")

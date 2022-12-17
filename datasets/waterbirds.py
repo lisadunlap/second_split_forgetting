@@ -16,7 +16,6 @@ class Waterbirds:
 
     def __init__(self, root, split='train', transform=transform):
         splits = ['train', 'val', 'test']
-        # root = os.path.join(root, 'waterbird_1.0_forest2water2')
         self.root = root
         self.split = split
         self.transform = transform

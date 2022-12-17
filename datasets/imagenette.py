@@ -61,7 +61,7 @@ class ExpandedImagenette(ImagenetteWoof):
 
     class_proportions = [1.0, 1.0, 1.0, 1.0, 0.5, 0.25, 0.1, 0.01, 0.001, 0.0001]
 
-    def __init__(self, root, cfg, transform=transform, split='train', type='imagenette2'):
+    def __init__(self, root, cfg, transform=transform, split='train', type='imagewoof2'):
         super().__init__(root, cfg=cfg, transform=transform, type=type)
         if split == 'train':
             self.samples, self.groups = self.remove_samples()
@@ -69,6 +69,7 @@ class ExpandedImagenette(ImagenetteWoof):
             self.groups = [l for s, l in self.samples]
             self.samples = [(s, 1) for s, l in self.samples]
         self.labels = [s[1] for s in self.samples]
+        self.classes = ['n02102040']
 
     def remove_samples(self):
         """
@@ -80,6 +81,18 @@ class ExpandedImagenette(ImagenetteWoof):
                 samples.append((self.samples[i][0], 1))
                 groups.append(self.labels[i])
         return samples, groups
+    
+    def get_upweight_samples(self):
+        """
+        Get samples to upweight in training (underrep groups).
+        """
+        idxs, groups = [], []
+        for i, g in enumerate(self.groups):
+            if g in list(range(4, 10)):
+                idxs.append(i)
+                groups.append(g)
+        return idxs, groups
+        
 
 class ImagenetteC(VisImageFolder):
 
@@ -92,6 +105,8 @@ class ImagenetteC(VisImageFolder):
         super().__init__(os.path.join(root, 'imagenette-c', corruption, str(severity)), transform=transform)
         self.cfg = cfg
         self.labels = [s[1] for s in self.samples]
+
+        
 
 # class ImagenetteA(ImageFolder):
 #     """

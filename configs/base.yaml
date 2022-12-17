@@ -4,18 +4,20 @@ exp:
   num_epochs: 200
   debug: false
   wandb: true
-  train_first_split_only: false
+  oracle: false
 
 model:
+  arch: resnet50
   resume: false
   ft: false
   save_every: 1
-  resume_epoch: 'best'
+  resume_epoch: best
   eval: false
+  load_stage: all # all, first-split, or second-split
 
 data:
   dataset: 'Waterbirds100'
-  train_first_split: 'even'
+  train_first_split: 'all'
   test_dataset: 'Waterbirds'
   batch_size: 256
   root: '/shared/lisabdunlap/data'
@@ -23,6 +25,7 @@ data:
   remove: false
   num_samples_to_remove: 0.1 # could either be a proportion or a set number
   removal_method: random
+  upweight_factor: 2 # how much to upweight intersting examples
 
 hps:
   lr: 0.001
@@ -31,4 +34,5 @@ hps:
 noise:
   p: 0.1
   method: noop
-  clean_val: false
+  clean_val: true
+  confusion_matrix: false

@@ -1,0 +1,36 @@
+bathtub
+ceiling fan
+couch
+fence
+hot tub
+mailbox
+postcard
+sleeping bag
+streetlight
+table
+toothbrush
+vase
+bed
+chair
+door
+fireplace
+ladder
+picture frame
+see saw
+stairs
+suitcase
+teapot
+toothpaste
+wine glass
+bench
+chandelier
+dresser
+floor lamp
+lantern
+pillow
+sink
+stove
+swing
+set
+toilet
+umbrella

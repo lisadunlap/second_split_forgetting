@@ -4,6 +4,10 @@ exp:
 data:
   dataset: ExpandedImagenette
   test_dataset: ExpandedImagenette
+  batch_size: 256
 
 model:
   arch: resnet18
+
+hps:
+  lr: 0.01

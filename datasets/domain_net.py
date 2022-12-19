@@ -61,3 +61,15 @@ class DomainNet(VisImageFolder):
         img, label, group, idx = super().__getitem__(idx)
         return img, label, self.groups[idx], idx
         
+
+    def get_upweight_samples(self):
+        """
+        Get samples to upweight in training (underrep groups).
+        """
+        idxs, groups = [], []
+        for i, g in enumerate(self.groups):
+            if g in [0, 1, 2]:
+                idxs.append(i)
+                groups.append(g)
+        return idxs, groups
+        

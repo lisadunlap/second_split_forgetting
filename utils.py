@@ -10,6 +10,7 @@ import torch.nn.init as init
 import ast
 from sklearn.metrics import confusion_matrix
 from scipy import stats
+from tqdm import tqdm
 
 import omegaconf
 
@@ -95,4 +96,50 @@ def evaluate(predictions, labels, groups=[], label_names=None, num_augmentations
 
 def get_per_group_acc(value, predictions, labels, groups):
     indices = np.array(np.where(groups == value))
-    return np.mean((labels[indices] == predictions[indices]).astype(np.float)) * 100.
+    return np.mean((labels[indices] == predictions[indices]).astype(np.float)) * 100
+
+def get_resnet_features(model, dataset, device='cuda'):
+    """
+    Gets the features of pretrained resnet model
+    """
+    loader = torch.utils.data.DataLoader(
+        dataset, batch_size=256, shuffle=False, num_workers=2)
+
+    features = []
+    def hook(model, input, output):
+        features.append(input[0].detach())
+        return hook
+
+    h = model.fc.register_forward_hook(hook)
+
+    model.eval()
+    all_features, all_labels = [], []
+    all_groups, all_idxs = [], []
+    
+    with torch.no_grad():
+        for img, label, group, idx in tqdm(loader):
+            out = model(img.to(device))
+            all_labels.append(label)
+            all_groups.append(group)
+            all_idxs.append(idx)
+    all_features = features
+    h.remove()
+    print(torch.cat(all_features).cpu().numpy().shape)
+
+    return torch.cat(all_features).cpu(), torch.cat(all_labels).cpu(), torch.cat(all_groups).cpu(), torch.cat(all_idxs).cpu()
+
+
+def get_run_name(args):
+    """
+    Creates a run name based on the arguments
+    """
+    run = f"{args.exp.run}-debug" if args.exp.debug else args.exp.run
+    if args.noise.method != "noop":
+        run = f"{run}-{args.noise.method}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
+    else:
+        run = f"{run}-{args.noise.method}-{args.noise.p}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
+
+    if args.exp.oracle:
+        run = f"{run}-oracle"
+
+    return run

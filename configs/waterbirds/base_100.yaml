@@ -1,9 +1,9 @@
 exp:
-  run: waterbirds95
+  run: waterbirds100
 
 data:
-  dataset: Waterbirds95
-  test_dataset: Waterbirds95
+  dataset: Waterbirds100
+  test_dataset: Waterbirds100
   root: '/shared/lisabdunlap/vl-attention/data'
 
 model:

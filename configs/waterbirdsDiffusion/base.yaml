@@ -1,7 +1,11 @@
 exp:
-  run: 'waterbirds-diffusion'
+  run: waterbirds-diffusion
 
 data:
-  dataset: 'WaterbirdsDiffusion'
-  test_dataset: Waterbirds95
-  root: '/shared/lisabdunlap/vl-attention/data'
+  dataset: WaterbirdsDiffusion
+  test_dataset: Waterbirds100
+  root: /shared/lisabdunlap/vl-attention/data
+
+model:
+  arch: resnet50
+  ft: true

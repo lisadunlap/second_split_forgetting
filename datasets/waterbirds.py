@@ -59,6 +59,17 @@ class Waterbirds95(Waterbirds):
     def __init__(self, root, split='train'):
         super().__init__(os.path.join(root, 'waterbird_complete95_forest2water2'), split)
 
+    def get_upweight_samples(self):
+        """
+        Get samples to upweight in training (underrep groups).
+        """
+        idxs, groups = [], []
+        for i, g in enumerate(self.groups):
+            if g in [1, 2]:
+                idxs.append(i)
+                groups.append(g)
+        return idxs, groups
+
 class WaterbirdsDiffusion(VisImageFolder):
 
     transform = transforms.Compose([

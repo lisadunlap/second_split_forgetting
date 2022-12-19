@@ -133,18 +133,23 @@ class SubsetDataset:
             return item[0], item[1], item[2], idx
         return item
 
-# class EmbeddingDataset:
-#     """
-#     Dataset for pretrained embeddings
-#     """
+class EmbeddingDataset:
 
-#     def __init__(self, dataset, features, labels, groups, idxs):
-#         self.features = features
-#         self.labels = labels
-#         self.groups = groups
-#         self.idxs = idxs
-#         self.classes = np.sort(np.unique(labels))
-#         self.class_weights = get_counts(self.labels)
+    def __init__(self, dataset, embeddings, labels, groups, idxs):
+        self.dataset = dataset
+        self.embeddings = embeddings
+        # self.samples = dataset.samples
+        self.labels = labels
+        self.groups = groups
+        self.classes = dataset.classes
+        self.class_weights = dataset.class_weights
+        self.idxs = idxs
+    
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.embeddings[idx], self.labels[idx], self.groups[idx], idx
 
 def get_sampler(cfg, dataset, samples_to_remove=[], samples_to_upweight=[], split='train'):
     """

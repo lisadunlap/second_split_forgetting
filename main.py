@@ -6,6 +6,7 @@ from tqdm import tqdm
 import copy
 import pandas as pd
 
+import torchvision
 from torchvision.models import resnet50, ResNet50_Weights
 import torchvision.models as models
 import torchvision.transforms as transforms
@@ -18,8 +19,8 @@ import wandb
 
 from utils import read_unknowns, nest_dict, flatten_config
 from datasets.get_dataset import get_dataset
-from datasets.base import BaseDataset, get_sampler
-from utils import evaluate
+from datasets.base import BaseDataset, EmbeddingDataset, get_sampler
+from utils import evaluate, get_run_name, get_resnet_features
 import removal_methods
 
 parser = argparse.ArgumentParser(description='Train/Val')
@@ -46,9 +47,7 @@ np.random.seed(args.seed)
 if not args.exp.wandb:
     os.environ['WANDB_SILENT']="true"
 
-run = f"{args.exp.run}-debug" if args.exp.debug else args.exp.run
-if args.exp.debug:
-    run = 'debug'
+run = get_run_name(args)
 wandb.init(entity='lisadunlap', project='second_split', name=run, config=flatten_config(args))
 print(f"DATASET {args.data.dataset}")
 
@@ -59,7 +58,7 @@ weights = train_set.class_weights
 
 labels = np.array(train_set.labels) == np.array(train_set.clean_labels)
 p = args.noise.p if args.noise.method != 'noop' else 0
-print(f"Training {args.exp.run} on {args.data.dataset} with {p*100}% {args.noise.method} noise ({len(labels[labels == False])}/{len(labels)})")
+print(f"Training {run} on {args.data.dataset} with {p*100}% {args.noise.method} noise ({len(labels[labels == False])}/{len(labels)})")
 
 # Load model
 pretrained_weights = 'IMAGENET1K_V1' if args.model.ft else None
@@ -71,9 +70,24 @@ for name, param in model.named_parameters():
         param.requires_grad = True
     else:
         param.requires_grad = False
+# model = nn.DataParallel(model).cuda()
+
+## BETA: save emb and put lin layer on top
+if args.model.save_emb:
+    print("Computing embeddings....")
+    assert args.noise.method == 'noop', "Can't save embeddings with noise"
+    train_features, train_labels, train_groups, train_idxs = get_resnet_features(model, train_set)
+    val_features, val_labels, val_groups, val_idxs = get_resnet_features(model, val_set)
+    test_features, test_labels, test_groups, test_idxs = get_resnet_features(model, test_set)
+    train_set = EmbeddingDataset(train_set, train_features, train_labels, train_groups, train_idxs)
+    val_set = EmbeddingDataset(val_set, val_features, val_labels, val_groups, val_idxs)
+    test_set = EmbeddingDataset(test_set, test_features, test_labels, test_groups, test_idxs)
+    print("...done!")
+    # change model to linear layer only
+    model = torchvision.ops.MLP(dim, [len(train_set.classes)]).cuda()
+    print(model)
+    
 model = nn.DataParallel(model).cuda()
-
-
 
 # Remove samples from the train set
 if args.data.remove:
@@ -84,9 +98,13 @@ if args.data.remove:
     print(f"Removing {len(removed_idxs)} samples from first split via {args.data.removal_method}")
     print(f"Upweighting {len(upweight_idxs)} samples from second split via {args.data.removal_method}")
 if args.exp.oracle:
-    assert args.data.dataset == 'ExpandedImagenette', "Oracle only works with ExpandedImagenette"
-    idxs, groups = train_set.dataset.datasets[1].get_upweight_samples()
+    assert hasattr(train_set.dataset, 'get_upweight_samples'), f"Oracle doesn't work with dataset {args.data.dataset}"
+    if args.data.dataset in ['ExpandedImagenette', 'WaterbirdsDiffusion']:
+        idxs, groups = train_set.dataset.datasets[1].get_upweight_samples()
+    else:
+        idxs, groups = train_set.dataset.get_upweight_samples()
     removed_idxs, upweight_idxs = train_set.noisy_idxs, idxs
+    print(f"Removing {len(removed_idxs)} samples and upweight {len(upweight_idxs)}")
 else:
     removed_idxs, upweight_idxs = [], []
 
@@ -196,7 +214,7 @@ def save_predictions(idxs, preds, labels, groups, losses, confs, epoch, stage='f
             "conf": c,
             "group": g
         }]
-    predictions_dir = f'./predictions/{args.data.dataset}/{args.exp.run}/{stage}/{phase}'
+    predictions_dir = f'./predictions/{args.data.dataset}/{run}/{stage}/{phase}'
     if not os.path.exists(predictions_dir):
         os.makedirs(predictions_dir)
     print(f'Saving predictions to {predictions_dir}/predictions-{args.data.train_first_split}-epoch_{epoch}.csv')
@@ -210,7 +228,7 @@ def save_checkpoint(model, acc, epoch, stage='base'):
         "net": model.module.state_dict()
     }
     print("SAVING CHECKPOINT")
-    checkpoint_dir = f'./checkpoint/{args.data.dataset}/{args.exp.run}'
+    checkpoint_dir = f'./checkpoint/{args.data.dataset}/{run}'
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
     print(f'Saving checkpoint with acc {acc} to {checkpoint_dir}/{stage}-{args.data.train_first_split}-model_best.pth')
@@ -218,7 +236,7 @@ def save_checkpoint(model, acc, epoch, stage='base'):
     wandb.save(f'{checkpoint_dir}/{stage}-{args.data.train_first_split}-model_best.pth')
 
 def load_checkpoint(model, stage='base'):
-    path = f'./checkpoint/{args.data.dataset}/{args.exp.run}/{stage}-{args.data.train_first_split}-model_best.pth'
+    path = f'./checkpoint/{args.data.dataset}/{run}/{stage}-{args.data.train_first_split}-model_best.pth'
     checkpoint = torch.load(path)
     model.module.load_state_dict(checkpoint['net'])
     print(f"...loaded checkpoint with acc {checkpoint['acc']}")

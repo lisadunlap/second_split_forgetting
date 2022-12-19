@@ -14,6 +14,7 @@ model:
   resume_epoch: best
   eval: false
   load_stage: all # all, first-split, or second-split
+  save_emb: false
 
 data:
   dataset: 'Waterbirds100'
@@ -26,6 +27,7 @@ data:
   num_samples_to_remove: 0.1 # could either be a proportion or a set number
   removal_method: random
   upweight_factor: 2 # how much to upweight intersting examples
+  upweight_fraction: 0.05 # what percent of data to upweight for a batch
 
 hps:
   lr: 0.001

@@ -160,7 +160,7 @@ def get_sampler(cfg, dataset, samples_to_remove=[], samples_to_upweight=[], spli
     image_ids = [i for i in range(len(dataset))]
     weights = np.ones(len(image_ids))
     weights[samples_to_remove] = 0
-    weights[samples_to_upweight] = cfg.data.upweight_factor
+    weights[samples_to_upweight] *= cfg.data.upweight_factor
     # normalize by class counts
     labels = [l for l in dataset.labels if weights[l] > 0]
     groups = [g for g in dataset.dataset.groups if weights[g] > 0]
@@ -169,6 +169,7 @@ def get_sampler(cfg, dataset, samples_to_remove=[], samples_to_upweight=[], spli
         # group_subset = [i for i,g in enumerate(groups) if g == group]
         # subset = list(set(label_subset).union(group_subset))
         weights[i] /= np.sum(label_subset)
+    weights /= np.max(weights)
     # print(weights)
     sampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights), replacement=True)
     return sampler

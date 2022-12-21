@@ -135,11 +135,39 @@ def get_run_name(args):
     """
     run = f"{args.exp.run}-debug" if args.exp.debug else args.exp.run
     if args.noise.method != "noop":
-        run = f"{run}-{args.noise.method}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
+        run = f"{run}-bs{args.data.batch_size}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
     else:
-        run = f"{run}-{args.noise.method}-{args.noise.p}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
+        run = f"{run}-bs{args.data.batch_size}-{args.noise.method}-{args.noise.p}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
+
+    if args.model.save_emb:
+        run = f"{run}-lp"
 
     if args.exp.oracle:
         run = f"{run}-oracle"
 
     return run
+
+def compareModelWeights(model_a, model_b):
+    module_a = model_a._modules
+    module_b = model_b._modules
+    if len(list(module_a.keys())) != len(list(module_b.keys())):
+        return False
+    a_modules_names = list(module_a.keys())
+    b_modules_names = list(module_b.keys())
+    for i in range(len(a_modules_names)):
+        layer_name_a = a_modules_names[i]
+        layer_name_b = b_modules_names[i]
+        if layer_name_a != layer_name_b:
+            return False
+        layer_a = module_a[layer_name_a]
+        layer_b = module_b[layer_name_b]
+        if (
+            (type(layer_a) == nn.Module) or (type(layer_b) == nn.Module) or
+            (type(layer_a) == nn.Sequential) or (type(layer_b) == nn.Sequential)
+            ):
+            if not compareModelWeights(layer_a, layer_b):
+                return False
+        if hasattr(layer_a, 'weight') and hasattr(layer_b, 'weight'):
+            if not torch.equal(layer_a.weight.data, layer_b.weight.data):
+                return False
+    return True

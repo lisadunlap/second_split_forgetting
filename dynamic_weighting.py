@@ -24,6 +24,7 @@ from datasets.get_dataset import get_dataset
 from datasets.base import BaseDataset, EmbeddingDataset, get_sampler
 from utils import evaluate, get_run_name, compareModelWeights
 import removal_methods
+import methods.profiling as profiling
 # from main import save_checkpoint, load_checkpoint, save_predictions
 
 parser = argparse.ArgumentParser(description='Train/Val')
@@ -74,32 +75,36 @@ if args.exp.oracle:
 else:
     removed_idxs, upweight_idxs = [], []
 
-# Load model
-pretrained_weights = 'IMAGENET1K_V1' if args.model.ft else None
-model = getattr(models, args.model.arch)(weights=pretrained_weights).cuda()
-num_classes, dim = model.fc.weight.shape
-model.fc = nn.Linear(dim, len(train_set.classes)).cuda()
-for name, param in model.named_parameters():
-    if "fc" in name or not args.model.ft:
-        param.requires_grad = True
-    else:
-        param.requires_grad = False
-# model = nn.DataParallel(model).cuda()
+def get_model(args):
+    # Load model
+    pretrained_weights = 'IMAGENET1K_V1' if args.model.ft else None
+    model = getattr(models, args.model.arch)(weights=pretrained_weights).cuda()
+    num_classes, dim = model.fc.weight.shape
+    model.fc = nn.Linear(dim, len(train_set.classes)).cuda()
+    for name, param in model.named_parameters():
+        if "fc" in name or not args.model.ft:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+    # model = nn.DataParallel(model).cuda()
+    if args.model.save_emb:
+        # change model to linear layer only
+        return model, torchvision.ops.MLP(dim, [len(train_set.classes)]).cuda()
+    return model, model
+
+base_model, model = get_model(args)
 
 ## BETA: save emb and put lin layer on top
 if args.model.save_emb:
-    print("Computing embeddings....")
+    print("Computing embeddings...")
     assert args.noise.method == 'noop', "Can't save embeddings with noise"
-    train_features, train_labels, train_groups, train_idxs = get_resnet_features(model, train_set)
-    val_features, val_labels, val_groups, val_idxs = get_resnet_features(model, val_set)
-    test_features, test_labels, test_groups, test_idxs = get_resnet_features(model, test_set)
+    train_features, train_labels, train_groups, train_idxs = get_resnet_features(base_model, train_set)
+    val_features, val_labels, val_groups, val_idxs = get_resnet_features(base_model, val_set)
+    test_features, test_labels, test_groups, test_idxs = get_resnet_features(base_model, test_set)
     train_set = EmbeddingDataset(train_set, train_features, train_labels, train_groups, train_idxs)
     val_set = EmbeddingDataset(val_set, val_features, val_labels, val_groups, val_idxs)
     test_set = EmbeddingDataset(test_set, test_features, test_labels, test_groups, test_idxs)
     print("...done!")
-    # change model to linear layer only
-    model = torchvision.ops.MLP(dim, [len(train_set.classes)]).cuda()
-    print(model)
     
 model = nn.DataParallel(model).cuda()
 
@@ -130,6 +135,8 @@ def get_optimizer(args, model):
         raise ValueError(f"Unknown optimizer {args.hps.optimizer}")
     return optimizer
 optimizer = get_optimizer(args, model)
+
+results_df = pd.DataFrame(columns=['image_id', 'epoch', 'label', 'prediction', 'loss', 'confidence', 'group', 'phase'])
 
 def train_val_loop(args, model, optimizer,
     loader, weights, epoch, best_acc=0, phase="train", stage='first-split'):
@@ -173,7 +180,7 @@ def train_val_loop(args, model, optimizer,
                 pbar.update(i)
             
     accuracy, balanced_acc, class_accuracy, group_accuracy =  evaluate(cls_pred, cls_true, cls_groups)
-    metrics = {f"{phase} loss": total_loss, f"{phase} cls acc": accuracy, f"{phase} balanced class acc": balanced_acc, 
+    metrics = {f"{phase} loss": total_loss, f"{phase} acc": accuracy, f"{phase} balanced class acc": balanced_acc, 
                 f"{phase} class acc": class_accuracy, f"{phase} group acc": group_accuracy, "epoch": epoch}
     if phase == 'val' and balanced_acc > best_acc:
         best_acc = balanced_acc
@@ -182,63 +189,89 @@ def train_val_loop(args, model, optimizer,
         wandb.summary["best val group acc"] = group_accuracy
         wandb.summary["best val class acc"] = class_accuracy
         wandb.summary["best val acc"] = accuracy
+    if epoch % args.model.save_every == 0:
+    # save predictions 
+        save_predictions(idxs, cls_pred, cls_true, cls_groups, cls_losses, cls_conf, epoch, phase)
     return metrics, best_acc
 
-def profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, split='train', num_iterations=10):
-    """
-    Inefficient Dynamic Weighting profiling: 
-    (1) pick a random subset of samples to upeight
-    (2) train one epoch on full dataset and eval 
-    (3) if val acc is better than weights before, keep the upweights
-    (4) repeat (1) - (3) until no improvement is found for more than 10 consecutive subsets
-    """
-    best_val_acc = 0
-    no_improvement = 0
-    weights = get_weights(cfg, train_loader.dataset, split=split) # get inital weights
-    while no_improvement < num_iterations:
-        diff, weights, model, train_metrics, val_metrics = one_profile_step(cfg, weights, model, optimizer, train_loader, val_loader, split=split)
-        print(f"profile step {no_improvement} diff: {diff:.3f}")
-        wandb.log({'profile step': no_improvement, 'diff': diff})
-        if diff < 0:
-            no_improvement = 0
-        else:
-            no_improvement += 1
-        wandb.log(train_metrics)
-        wandb.log(val_metrics)
-    return weights, model, train_metrics, val_metrics
+def save_predictions(idxs, preds, labels, groups, losses, confs, epoch, phase='val-split'):
+    global results_df
+    predictions = []
+    for (i, p, l, g, loss, c) in zip(idxs, preds, labels, groups, losses, confs):
+        predictions += [{
+            "image_id": int(i),
+            "epoch": epoch,
+            "label": l,
+            "prediction": p,
+            "loss": loss,
+            "conf": c,
+            "group": g,
+            "phase": phase
+        }]
+    predictions_dir = f'./predictions/{args.data.dataset}/{run}/{phase}'
+    if not os.path.exists(predictions_dir):
+        os.makedirs(predictions_dir)
+    print(f'Saving predictions to {predictions_dir}/epoch_{epoch}.csv')
+    df = pd.DataFrame(predictions)
+    df.to_csv(f'{predictions_dir}/epoch_{epoch}.csv', index=False)
+    results_df = pd.concat([results_df, df])
+    wandb.save(f'{predictions_dir}/epoch_{epoch}.csv')
 
-def one_profile_step(cfg, weights, model, optimizer, train_loader, val_loader, epoch, split='train'):
+# def profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, epoch, best_acc=0):
+#     """
+#     Run profiler
+#     """
+#     profiler = getattr(profiling, cfg.profile.method)(cfg, train_loader, val_loader)
+#     np.random.seed(epoch)
+#     sample_ids = train_loader.dataset.idxs
+#     samples_to_upweight = np.random.choice(sample_ids, size=int(len(sample_ids) * args.data.upweight_fraction), replace=False)
+#     for idx in samples_to_upweight:
+#         new_weights = profiler.get_new_weights(weights, idx)
+#         model.eval()
+#         torch.save(model.module.state_dict(), 'cur_model_weights.pth')
+#         _, new_model = get_model(args)
+#         new_model.load_state_dict(torch.load('cur_model_weights.pth'))
+#         new_model = nn.DataParallel(new_model).cuda()
+#         new_optimizer = get_optimizer(args, new_model)
+#         train_metrics, _ = train_val_loop(cfg, model, optimizer, train_loader, weights, epoch=epoch, phase='train', stage='profile-upweights')
+#         val_metrics, best_acc = train_val_loop(cfg, model, optimizer, val_loader, weights, epoch=epoch, best_acc=best_acc, phase='val', stage='profile-upweights')
+#         new_train_metrics, _ = train_val_loop(cfg, new_model, new_optimizer, train_loader, new_weights, epoch=epoch, phase='train', stage='profile-upweights')
+#         new_val_metrics, best_acc = train_val_loop(cfg, new_model, new_optimizer, val_loader, new_weights, epoch=epoch, best_acc=best_acc, phase='val', stage='profile-upweights')
+#         weights, changed = profiler.profile_step(val_metrics, new_val_metrics, weights, new_weights, idx)
+#         if changed:
+#             print("********** CHANGED WEIGHTS **********")
+#         #     model = new_model
+#         #     optimizer = new_optimizer
+#         #     train_metrics = new_train_metrics
+#         #     val_metrics = new_val_metrics
+#     return weights, model, train_metrics, val_metrics, best_acc
+
+def profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, epoch, best_acc=0):
     """
-    Steps 1-3 of profile_upweights
+    Run profiler
     """
+    profiler = getattr(profiling, cfg.profile.method)(cfg, train_loader, val_loader)
+    np.random.seed(epoch)
     sample_ids = train_loader.dataset.idxs
-    # to get around pre set random seed 
-    t = 1000 * time.time() # current time in milliseconds
-    print("seed ", int(t) % 2**32)
-    np.random.seed(int(t) % 2**32)
-    samples_to_upweight = np.random.choice(sample_ids, size=int(len(sample_ids) * args.data.upweight_fraction), replace=False)
+    # samples_to_upweight = np.random.choice(sample_ids, size=int(len(sample_ids) * args.data.upweight_fraction), replace=False)
+    samples_to_upweight = sample_ids
     model.eval()
     torch.save(model.module.state_dict(), 'cur_model_weights.pth')
-    old_model = torchvision.ops.MLP(dim, [len(train_set.classes)]).cuda()
-    old_model.load_state_dict(torch.load('cur_model_weights.pth'))
-    old_model = nn.DataParallel(old_model).cuda()
-    old_optimizer = get_optimizer(args, old_model)
-    new_weights = get_weights(cfg, train_loader.dataset, samples_to_upweight=samples_to_upweight, split=split)
-    print(weights)
-    print(f" weights diff = {np.sum(new_weights != weights)}")
-    train_metrics, _ = train_val_loop(cfg, model, optimizer, train_loader, weights, epoch=epoch, phase='train', stage='profile-upweights')
-    val_metrics, _ = train_val_loop(cfg, model, optimizer, val_loader, weights, epoch=epoch, phase='val', stage='profile-upweights')
-    print("LISA LOOK HERE SHOULD BE FALSE ", compareModelWeights(model, old_model))
-    new_train_metrics, _ = train_val_loop(cfg, old_model, old_optimizer, train_loader, new_weights, epoch=epoch, phase='train', stage='profile-upweights')
-    new_val_metrics, _ = train_val_loop(cfg, old_model, old_optimizer, val_loader, new_weights, epoch=epoch, phase='val', stage='profile-upweights')
-    print(f"new {new_val_metrics['profile-upweights val balanced class acc']} old {val_metrics['profile-upweights val balanced class acc']}")
-    if new_val_metrics['profile-upweights val balanced class acc'] > val_metrics['profile-upweights val balanced class acc']:
-        weights = new_weights
-        model = old_model
-        optimizer = old_optimizer
-        train_metrics = new_train_metrics
-        val_metrics = new_val_metrics
-    return new_val_metrics['profile-upweights val balanced class acc'] - val_metrics['profile-upweights val balanced class acc'], weights, model, train_metrics, val_metrics
+    train_metrics, _ = train_val_loop(cfg, model, optimizer, train_loader, weights, epoch=epoch, phase='train')
+    val_metrics, best_acc = train_val_loop(cfg, model, optimizer, val_loader, weights, epoch=epoch, best_acc=best_acc, phase='val')
+    diffs = np.zeros(len(samples_to_upweight))
+    for idx in samples_to_upweight:
+        new_weights = profiler.get_new_weights(weights, idx)
+        _, new_model = get_model(args)
+        new_model.load_state_dict(torch.load('cur_model_weights.pth'))
+        new_model = nn.DataParallel(new_model).cuda()
+        new_optimizer = get_optimizer(args, new_model)
+        new_train_metrics, _ = train_val_loop(cfg, new_model, new_optimizer, train_loader, new_weights, epoch=epoch, phase='train', stage='profile-upweights')
+        new_val_metrics, best_acc = train_val_loop(cfg, new_model, new_optimizer, val_loader, new_weights, epoch=epoch, best_acc=best_acc, phase='val', stage='profile-upweights')
+        weights, diff, changed = profiler.profile_step(val_metrics, new_val_metrics, weights, new_weights, idx)
+        diffs[idx] = diff
+        np.save(f"diffs-{epoch}.npy", diffs)
+    return weights, model, train_metrics, val_metrics, best_acc
 
 def get_weights(cfg, dataset, samples_to_remove=[], samples_to_upweight=[], split='train', weights=None):
     """
@@ -264,23 +297,38 @@ def get_weights(cfg, dataset, samples_to_remove=[], samples_to_upweight=[], spli
 best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
 stage = 'first-split' if args.data.train_first_split != 'all' else 'all'
 num_epochs = args.exp.num_epochs if not args.exp.debug else 1
-initial_weights = get_weights(cfg, trainloader.dataset, samples_to_remove=removed_idxs, samples_to_upweight=upweight_idxs) # get inital weights
+weights = get_weights(cfg, trainloader.dataset, samples_to_remove=removed_idxs, samples_to_upweight=upweight_idxs) # get inital weights
 if args.exp.class_weights:
-    initial_weights = np.ones(len(trainloader.dataset))
+    weights = np.ones(len(trainloader.dataset))
 for epoch in range(num_epochs):
-    print("initial weights ", np.unique(initial_weights))
     if epoch < args.hps.warmup:
         print("------------------ warmup epoch {} ------------------".format(epoch))
-        train_metrics, _ = train_val_loop(args, model, optimizer, trainloader, initial_weights, epoch, phase="train", stage='profile-upweights')
-        val_metrics, best_val_acc = train_val_loop(args, model, optimizer, valloader, initial_weights, epoch, best_acc=best_val_acc, phase="val", stage='profile-upweights')
+        train_metrics, _ = train_val_loop(args, model, optimizer, trainloader, weights, epoch, phase="train", stage='profile-upweights')
+        val_metrics, best_val_acc = train_val_loop(args, model, optimizer, valloader, weights, epoch, best_acc=best_val_acc, phase="val", stage='profile-upweights')
         wandb.log(train_metrics)
         wandb.log(val_metrics)
     else:
         print("------------------ profile upweights epoch {} ------------------".format(epoch))
-        if epoch % args.hps.profile_freq == 0:
-            weights, model, train_metrics, val_metrics = profile_upweights(args, weights, model, optimizer, trainloader, valloader, epoch, split=stage, num_iterations=args.hps.num_profile_iterations)
+        if args.profile.method != 'Profiler' and epoch % args.hps.profile_freq == 0:
+            # profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, split='train', num_iterations=10)
+            old_train_metrics, old_val_metrics = train_metrics, val_metrics
+            weights, model, train_metrics, val_metrics, best_val_acc = profile_upweights(args, weights, model, optimizer, trainloader, valloader, epoch, best_acc=best_val_acc)
+            # train and val metrics should be the same 
+            assert all([old_train_metrics[k] == train_metrics[k] for k in old_train_metrics.keys()]), 'train metrics should be the same'
         else:
             train_metrics, _ = train_val_loop(args, model, optimizer, trainloader, weights, epoch, phase="train", stage='profile-upweights')
             val_metrics, best_val_acc = train_val_loop(args, model, optimizer, valloader, weights, epoch, best_acc=best_val_acc, phase="val", stage='profile-upweights')
             wandb.log(train_metrics)
             wandb.log(val_metrics)
+    # save weights metrix
+    predictions_dir = f'./predictions/{args.data.dataset}/{run}'
+    if not os.path.exists(predictions_dir):
+        os.makedirs(predictions_dir)
+    np.save(f'{predictions_dir}/weights_{epoch}.npy', weights)
+    wandb.save(f'{predictions_dir}/weights_{epoch}.npy')
+
+test_metrics, best_test_acc = train_val_loop(args, model, optimizer, testloader, weights, epoch, best_acc=best_test_acc, phase="test")
+wandb.summary['best test balanced acc'] = test_metrics['test balanced class acc']
+wandb.summary['best test acc'] = test_metrics['test acc']
+wandb.summary['best test group acc'] = test_metrics['test group acc']
+results_df.to_csv(f'{predictions_dir}/results.csv')

@@ -1,6 +1,6 @@
 exp:
-  run: waterbirds95
-  class_weights: false
+  run: waterbirds95-sanity
+  class_weights: true
 
 data:
   dataset: Waterbirds95
@@ -11,6 +11,3 @@ model:
   arch: resnet50
   ft: true
   save_emb: true
-
-hps:
-  lr: 0.01

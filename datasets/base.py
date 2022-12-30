@@ -1,7 +1,7 @@
 import torch
 import pandas as pd
 from utils import get_counts
-import methods
+import methods.remove as remove
 from PIL import Image
 import numpy as np
 from torchvision.datasets import ImageFolder
@@ -19,7 +19,7 @@ class BaseDataset:
         self.clean = clean
         self.classes = dataset.classes
         # clean = True overrides the config
-        self.mislabel_method = getattr(methods, 'noop' if clean else cfg.noise.method)
+        self.mislabel_method = getattr(remove, 'noop' if clean else cfg.noise.method)
         self.class_weights = get_counts(self.dataset.labels)
         self.clean_labels = self.dataset.labels
         self.labels, self.noisy_idxs = self.mislabel_method(cfg, self.dataset.labels, self.cfg.noise.p)

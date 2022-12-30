@@ -138,7 +138,10 @@ def get_run_name(args):
         run = f"{run}-bs{args.data.batch_size}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
     else:
         run = f"{run}-bs{args.data.batch_size}-{args.noise.method}-{args.noise.p}-lr{args.hps.lr}-wd{args.hps.weight_decay}-epochs{args.exp.num_epochs}-seed{args.seed}"
-
+    
+    if args.profile.method != "profile":
+        run = f"{run}-{args.profile.method}"
+        
     if args.model.save_emb:
         run = f"{run}-lp"
 

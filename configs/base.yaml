@@ -1,7 +1,7 @@
 seed: 0
 exp:
   run: 'clean'
-  num_epochs: 200
+  num_epochs: 800
   debug: false
   wandb: true
   oracle: false
@@ -31,10 +31,18 @@ data:
 
 hps:
   lr: 0.001
+  warmup: 10
   weight_decay: 5e-5
+  optimizer: sgd
+  profile_freq: 10
+  num_profile_iterations: 5
 
 noise:
   p: 0.1
   method: noop
   clean_val: true
   confusion_matrix: false
+
+profile: 
+  method: Profiler
+  metric: val balanced class acc

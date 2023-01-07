@@ -60,6 +60,25 @@ labels = np.array(train_set.labels) == np.array(train_set.clean_labels)
 p = args.noise.p if args.noise.method != 'noop' else 0
 print(f"Training {run} on {args.data.dataset} with {p*100}% {args.noise.method} noise ({len(labels[labels == False])}/{len(labels)})")
 
+# Remove samples from the train set
+if args.data.remove:
+    assert os.path.exists(args.data.results_dir), f"Results directory {args.data.results_dir} does not exist"
+    df = pd.concat([pd.read_csv(f) for f in os.listdir(args.data.results_dir)])
+    num_samples = args.data.num_samples_to_remove if args.data.num_samples_to_remove > 0 else int(args.data.num_samples_to_remove * len(train_set))
+    removed_idxs, upweight_idxs = getattr(removal_methods, args.data.removal_method)(args, df, num_samples)
+    print(f"Removing {len(removed_idxs)} samples from first split via {args.data.removal_method}")
+    print(f"Upweighting {len(upweight_idxs)} samples from second split via {args.data.removal_method}")
+if args.exp.oracle:
+    assert hasattr(train_set.dataset, 'get_upweight_samples'), f"Oracle doesn't work with dataset {args.data.dataset}"
+    if args.data.dataset in ['ExpandedImagenette', 'WaterbirdsDiffusion']:
+        idxs, groups = train_set.dataset.datasets[1].get_upweight_samples()
+    else:
+        idxs, groups = train_set.dataset.get_upweight_samples()
+    removed_idxs, upweight_idxs = train_set.noisy_idxs, idxs
+    print(f"Removing {len(removed_idxs)} samples and upweight {len(upweight_idxs)}")
+else:
+    removed_idxs, upweight_idxs = [], []
+
 # Load model
 pretrained_weights = 'IMAGENET1K_V1' if args.model.ft else None
 model = getattr(models, args.model.arch)(weights=pretrained_weights).cuda()
@@ -89,25 +108,6 @@ if args.model.save_emb:
     
 model = nn.DataParallel(model).cuda()
 
-# Remove samples from the train set
-if args.data.remove:
-    assert os.path.exists(args.data.results_dir), f"Results directory {args.data.results_dir} does not exist"
-    df = pd.concat([pd.read_csv(f) for f in os.listdir(args.data.results_dir)])
-    num_samples = args.data.num_samples_to_remove if args.data.num_samples_to_remove > 0 else int(args.data.num_samples_to_remove * len(train_set))
-    removed_idxs, upweight_idxs = getattr(removal_methods, args.data.removal_method)(args, df, num_samples)
-    print(f"Removing {len(removed_idxs)} samples from first split via {args.data.removal_method}")
-    print(f"Upweighting {len(upweight_idxs)} samples from second split via {args.data.removal_method}")
-if args.exp.oracle:
-    assert hasattr(train_set.dataset, 'get_upweight_samples'), f"Oracle doesn't work with dataset {args.data.dataset}"
-    if args.data.dataset in ['ExpandedImagenette', 'WaterbirdsDiffusion']:
-        idxs, groups = train_set.dataset.datasets[1].get_upweight_samples()
-    else:
-        idxs, groups = train_set.dataset.get_upweight_samples()
-    removed_idxs, upweight_idxs = train_set.noisy_idxs, idxs
-    print(f"Removing {len(removed_idxs)} samples and upweight {len(upweight_idxs)}")
-else:
-    removed_idxs, upweight_idxs = [], []
-
 # get sampler (for removing/upweighting samples)
 sampler = get_sampler(args, train_set, removed_idxs, upweight_idxs)
 
@@ -133,7 +133,12 @@ testloader = torch.utils.data.DataLoader(
 class_criterion = nn.CrossEntropyLoss()
 class_criterion_per = nn.CrossEntropyLoss(reduction='none')
 m = nn.Softmax(dim=1)
-optimizer = torch.optim.SGD(model.parameters(), lr=args.hps.lr, weight_decay=args.hps.weight_decay, momentum=0.9)
+if args.hps.optimizer == 'adam':
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.hps.lr, weight_decay=args.hps.weight_decay)
+elif args.hps.optimizer == 'sgd':
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.hps.lr, weight_decay=args.hps.weight_decay, momentum=0.9)
+else:
+    raise ValueError(f"Unknown optimizer {args.hps.optimizer}")
 # iters_per_epoch = len(first_split_trainloader)+1
 # T_max = args.exp.num_epochs*iters_per_epoch
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max, eta_min=0, last_epoch=- 1, verbose=False)

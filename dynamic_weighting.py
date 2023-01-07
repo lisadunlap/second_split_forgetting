@@ -52,7 +52,7 @@ if not args.exp.wandb:
     os.environ['WANDB_SILENT']="true"
 
 run = get_run_name(args)
-wandb.init(entity='lisadunlap', project='dynamic_weighting', name=run, config=flatten_config(args))
+wandb.init(entity='lisadunlap', project=args.proj, name=run, config=flatten_config(args))
 print(f"DATASET {args.data.dataset}")
 
 train_set = BaseDataset(get_dataset(args.data.dataset, cfg=args, split='train'), args)
@@ -65,7 +65,7 @@ p = args.noise.p if args.noise.method != 'noop' else 0
 print(f"Training {run} on {args.data.dataset} with {p*100}% {args.noise.method} noise ({len(labels[labels == False])}/{len(labels)})")
 
 if args.exp.oracle:
-    assert hasattr(train_set.dataset, 'get_upweight_samples'), f"Oracle doesn't work with dataset {args.data.dataset}"
+    assert hasattr(train_set.dataset, 'get_upweight_samples') or hasattr(train_set.dataset.datasets[1], 'get_upweight_samples'), f"Oracle doesn't work with dataset {args.data.dataset}"
     if args.data.dataset in ['ExpandedImagenette', 'WaterbirdsDiffusion']:
         idxs, groups = train_set.dataset.datasets[1].get_upweight_samples()
     else:
@@ -77,7 +77,7 @@ else:
 
 def get_model(args):
     # Load model
-    pretrained_weights = 'IMAGENET1K_V1' if args.model.ft else None
+    pretrained_weights = args.model.weights if args.model.ft and args.model.weights != 'None' else None
     model = getattr(models, args.model.arch)(weights=pretrained_weights).cuda()
     num_classes, dim = model.fc.weight.shape
     model.fc = nn.Linear(dim, len(train_set.classes)).cuda()
@@ -89,21 +89,33 @@ def get_model(args):
     # model = nn.DataParallel(model).cuda()
     if args.model.save_emb:
         # change model to linear layer only
-        return model, torchvision.ops.MLP(dim, [len(train_set.classes)]).cuda()
+        return model, torchvision.ops.MLP(dim, [dim // 2, len(train_set.classes)]).cuda()
     return model, model
 
 base_model, model = get_model(args)
 
 ## BETA: save emb and put lin layer on top
 if args.model.save_emb:
-    print("Computing embeddings...")
-    assert args.noise.method == 'noop', "Can't save embeddings with noise"
-    train_features, train_labels, train_groups, train_idxs = get_resnet_features(base_model, train_set)
-    val_features, val_labels, val_groups, val_idxs = get_resnet_features(base_model, val_set)
-    test_features, test_labels, test_groups, test_idxs = get_resnet_features(base_model, test_set)
-    train_set = EmbeddingDataset(train_set, train_features, train_labels, train_groups, train_idxs)
-    val_set = EmbeddingDataset(val_set, val_features, val_labels, val_groups, val_idxs)
-    test_set = EmbeddingDataset(test_set, test_features, test_labels, test_groups, test_idxs)
+    if args.model.load_emb: # load saved embeddings
+        print("Loading embeddings...")
+        save_dict = torch.load(f"{args.exp.save_dir}/{args.data.dataset}/emb_{args.model.arch}_{args.noise.method}_{args.noise.p}.pt")
+        assert save_dict['seed'] == args.seed, f"Seed {args.seed} doesn't match saved seed {save_dict['seed']}"
+    else: # compute embeddings
+        print("Computing embeddings...")
+        # assert args.noise.method == 'noop', "Can't save embeddings with noise"
+        train_features, train_labels, train_groups, train_idxs = get_resnet_features(base_model, train_set)
+        val_features, val_labels, val_groups, val_idxs = get_resnet_features(base_model, val_set)
+        test_features, test_labels, test_groups, test_idxs = get_resnet_features(base_model, test_set)
+        save_dict = {'train': {'features': train_features, 'labels': train_labels, 'groups': train_groups, 'idxs': train_idxs},
+                    'val': {'features': val_features, 'labels': val_labels, 'groups': val_groups, 'idxs': val_idxs},
+                    'test': {'features': test_features, 'labels': test_labels, 'groups': test_groups, 'idxs': test_idxs},
+                    'seed': args.seed}
+        if not os.path.exists(f"{args.exp.save_dir}/{args.data.dataset}"):
+            os.makedirs(f"{args.exp.save_dir}/{args.data.dataset}")
+        torch.save(save_dict, f"{args.exp.save_dir}/{args.data.dataset}/emb_{args.model.arch}_{args.noise.method}_{args.noise.p}.pt")
+    train_set = EmbeddingDataset(train_set, save_dict['train']['features'], save_dict['train']['labels'], save_dict['train']['groups'], save_dict['train']['idxs'])
+    val_set = EmbeddingDataset(val_set, save_dict['val']['features'], save_dict['val']['labels'], save_dict['val']['groups'], save_dict['val']['idxs'])
+    test_set = EmbeddingDataset(test_set, save_dict['test']['features'], save_dict['test']['labels'], save_dict['test']['groups'], save_dict['test']['idxs'])
     print("...done!")
     
 model = nn.DataParallel(model).cuda()
@@ -136,7 +148,7 @@ def get_optimizer(args, model):
     return optimizer
 optimizer = get_optimizer(args, model)
 
-results_df = pd.DataFrame(columns=['image_id', 'epoch', 'label', 'prediction', 'loss', 'confidence', 'group', 'phase'])
+results_df = pd.DataFrame(columns=['image_id', 'epoch', 'label', 'prediction', 'loss', 'conf', 'group', 'phase'])
 
 def train_val_loop(args, model, optimizer,
     loader, weights, epoch, best_acc=0, phase="train", stage='first-split'):
@@ -189,6 +201,7 @@ def train_val_loop(args, model, optimizer,
         wandb.summary["best val group acc"] = group_accuracy
         wandb.summary["best val class acc"] = class_accuracy
         wandb.summary["best val acc"] = accuracy
+        wandb.summary["best worst group acc"] = min(group_accuracy)
     if epoch % args.model.save_every == 0:
     # save predictions 
         save_predictions(idxs, cls_pred, cls_true, cls_groups, cls_losses, cls_conf, epoch, phase)
@@ -215,53 +228,24 @@ def save_predictions(idxs, preds, labels, groups, losses, confs, epoch, phase='v
     df = pd.DataFrame(predictions)
     df.to_csv(f'{predictions_dir}/epoch_{epoch}.csv', index=False)
     results_df = pd.concat([results_df, df])
-    wandb.save(f'{predictions_dir}/epoch_{epoch}.csv')
 
-# def profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, epoch, best_acc=0):
-#     """
-#     Run profiler
-#     """
-#     profiler = getattr(profiling, cfg.profile.method)(cfg, train_loader, val_loader)
-#     np.random.seed(epoch)
-#     sample_ids = train_loader.dataset.idxs
-#     samples_to_upweight = np.random.choice(sample_ids, size=int(len(sample_ids) * args.data.upweight_fraction), replace=False)
-#     for idx in samples_to_upweight:
-#         new_weights = profiler.get_new_weights(weights, idx)
-#         model.eval()
-#         torch.save(model.module.state_dict(), 'cur_model_weights.pth')
-#         _, new_model = get_model(args)
-#         new_model.load_state_dict(torch.load('cur_model_weights.pth'))
-#         new_model = nn.DataParallel(new_model).cuda()
-#         new_optimizer = get_optimizer(args, new_model)
-#         train_metrics, _ = train_val_loop(cfg, model, optimizer, train_loader, weights, epoch=epoch, phase='train', stage='profile-upweights')
-#         val_metrics, best_acc = train_val_loop(cfg, model, optimizer, val_loader, weights, epoch=epoch, best_acc=best_acc, phase='val', stage='profile-upweights')
-#         new_train_metrics, _ = train_val_loop(cfg, new_model, new_optimizer, train_loader, new_weights, epoch=epoch, phase='train', stage='profile-upweights')
-#         new_val_metrics, best_acc = train_val_loop(cfg, new_model, new_optimizer, val_loader, new_weights, epoch=epoch, best_acc=best_acc, phase='val', stage='profile-upweights')
-#         weights, changed = profiler.profile_step(val_metrics, new_val_metrics, weights, new_weights, idx)
-#         if changed:
-#             print("********** CHANGED WEIGHTS **********")
-#         #     model = new_model
-#         #     optimizer = new_optimizer
-#         #     train_metrics = new_train_metrics
-#         #     val_metrics = new_val_metrics
-#     return weights, model, train_metrics, val_metrics, best_acc
-
-def profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, epoch, best_acc=0):
+def profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, epoch, samples_to_upweight, best_acc=0):
     """
     Run profiler
     """
     profiler = getattr(profiling, cfg.profile.method)(cfg, train_loader, val_loader)
     np.random.seed(epoch)
-    sample_ids = train_loader.dataset.idxs
+    # sample_ids = train_loader.dataset.idxs
     # samples_to_upweight = np.random.choice(sample_ids, size=int(len(sample_ids) * args.data.upweight_fraction), replace=False)
-    samples_to_upweight = sample_ids
+    # samples_to_upweight = sample_ids
     model.eval()
     torch.save(model.module.state_dict(), 'cur_model_weights.pth')
     train_metrics, _ = train_val_loop(cfg, model, optimizer, train_loader, weights, epoch=epoch, phase='train')
     val_metrics, best_acc = train_val_loop(cfg, model, optimizer, val_loader, weights, epoch=epoch, best_acc=best_acc, phase='val')
-    diffs = np.zeros(len(samples_to_upweight))
+    diffs = np.zeros(len(train_loader.dataset.idxs))
     for idx in samples_to_upweight:
         new_weights = profiler.get_new_weights(weights, idx)
+        print(f"## weight diff {np.sum(weights - new_weights)}")
         _, new_model = get_model(args)
         new_model.load_state_dict(torch.load('cur_model_weights.pth'))
         new_model = nn.DataParallel(new_model).cuda()
@@ -269,6 +253,7 @@ def profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, 
         new_train_metrics, _ = train_val_loop(cfg, new_model, new_optimizer, train_loader, new_weights, epoch=epoch, phase='train', stage='profile-upweights')
         new_val_metrics, best_acc = train_val_loop(cfg, new_model, new_optimizer, val_loader, new_weights, epoch=epoch, best_acc=best_acc, phase='val', stage='profile-upweights')
         weights, diff, changed = profiler.profile_step(val_metrics, new_val_metrics, weights, new_weights, idx)
+        print(diff)
         diffs[idx] = diff
         np.save(f"diffs-{epoch}.npy", diffs)
     return weights, model, train_metrics, val_metrics, best_acc
@@ -297,38 +282,56 @@ def get_weights(cfg, dataset, samples_to_remove=[], samples_to_upweight=[], spli
 best_val_acc, best_test_acc, best_val_epoch = 0, 0, 0
 stage = 'first-split' if args.data.train_first_split != 'all' else 'all'
 num_epochs = args.exp.num_epochs if not args.exp.debug else 1
+weighter, selector = getattr(profiling, args.profile.method)(args, trainloader, valloader), getattr(profiling, args.select.method)(args, trainloader, valloader)
 weights = get_weights(cfg, trainloader.dataset, samples_to_remove=removed_idxs, samples_to_upweight=upweight_idxs) # get inital weights
+profile_steps = [args.hps.warmup] if (args.hps.profile_freq == 0 or args.profile.method == 'Profiler') else list(range(args.hps.warmup, num_epochs, args.hps.profile_freq))
+print("profile steps: ", profile_steps)
 if args.exp.class_weights:
     weights = np.ones(len(trainloader.dataset))
-for epoch in range(num_epochs):
-    if epoch < args.hps.warmup:
-        print("------------------ warmup epoch {} ------------------".format(epoch))
+predictions_dir = f'./predictions/{args.data.dataset}/{run}'
+if not os.path.exists(predictions_dir):
+    os.makedirs(predictions_dir)
+np.save(f'{predictions_dir}/weights_0.npy', weights)
+wandb.save(f'{predictions_dir}/weights_0.npy')
+if args.profile.method == 'LeaveOneOut':
+    print("entering new loop")
+    for epoch in range(num_epochs):
+        if epoch in profile_steps:
+            print(f"******************* profiling step {epoch} *******************")
+            samples = selector.get_interesting_samples(results_df[results_df['phase'] == 'train'])
+            # profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, split='train', num_iterations=10)
+            new_weights, model, train_metrics, val_metrics, best_val_acc = profile_upweights(args, weights, model, optimizer, trainloader, valloader, epoch, samples, best_acc=best_val_acc)
+            # train and val metrics should be the same 
+            # assert all([old_train_metrics[k] == train_metrics[k] for k in old_train_metrics.keys()]), 'train metrics should be the same'
+            print(f"weight difference {np.sum(np.abs(new_weights - weights))}")
+            weights = new_weights
+            # save weights metrix
+            np.save(f'{predictions_dir}/weights_{epoch}.npy', weights)
+            wandb.save(f'{predictions_dir}/weights_{epoch}.npy')
+        else:
+            train_metrics, _ = train_val_loop(args, model, optimizer, trainloader, weights, epoch, phase="train", stage='profile-upweights')
+            val_metrics, best_val_acc = train_val_loop(args, model, optimizer, valloader, weights, epoch, best_acc=best_val_acc, phase="val", stage='profile-upweights')
+        wandb.log(train_metrics)
+        wandb.log(val_metrics)
+else:
+    for epoch in range(num_epochs):
+        if epoch in profile_steps:
+            samples = selector.get_interesting_samples(results_df[results_df['phase'] == 'train'])
+            print("samples to upweight: ", len(samples))
+            new_weights = weighter.get_new_weights(weights, samples)
+            print(f"weight difference {np.sum(np.abs(new_weights - weights))}")
+            weights = new_weights
+            # save weights metrix
+            np.save(f'{predictions_dir}/weights_{epoch}.npy', weights)
+            wandb.save(f'{predictions_dir}/weights_{epoch}.npy')
         train_metrics, _ = train_val_loop(args, model, optimizer, trainloader, weights, epoch, phase="train", stage='profile-upweights')
         val_metrics, best_val_acc = train_val_loop(args, model, optimizer, valloader, weights, epoch, best_acc=best_val_acc, phase="val", stage='profile-upweights')
         wandb.log(train_metrics)
         wandb.log(val_metrics)
-    else:
-        print("------------------ profile upweights epoch {} ------------------".format(epoch))
-        if args.profile.method != 'Profiler' and epoch % args.hps.profile_freq == 0:
-            # profile_upweights(cfg, weights, model, optimizer, train_loader, val_loader, split='train', num_iterations=10)
-            old_train_metrics, old_val_metrics = train_metrics, val_metrics
-            weights, model, train_metrics, val_metrics, best_val_acc = profile_upweights(args, weights, model, optimizer, trainloader, valloader, epoch, best_acc=best_val_acc)
-            # train and val metrics should be the same 
-            assert all([old_train_metrics[k] == train_metrics[k] for k in old_train_metrics.keys()]), 'train metrics should be the same'
-        else:
-            train_metrics, _ = train_val_loop(args, model, optimizer, trainloader, weights, epoch, phase="train", stage='profile-upweights')
-            val_metrics, best_val_acc = train_val_loop(args, model, optimizer, valloader, weights, epoch, best_acc=best_val_acc, phase="val", stage='profile-upweights')
-            wandb.log(train_metrics)
-            wandb.log(val_metrics)
-    # save weights metrix
-    predictions_dir = f'./predictions/{args.data.dataset}/{run}'
-    if not os.path.exists(predictions_dir):
-        os.makedirs(predictions_dir)
-    np.save(f'{predictions_dir}/weights_{epoch}.npy', weights)
-    wandb.save(f'{predictions_dir}/weights_{epoch}.npy')
 
 test_metrics, best_test_acc = train_val_loop(args, model, optimizer, testloader, weights, epoch, best_acc=best_test_acc, phase="test")
 wandb.summary['best test balanced acc'] = test_metrics['test balanced class acc']
 wandb.summary['best test acc'] = test_metrics['test acc']
 wandb.summary['best test group acc'] = test_metrics['test group acc']
 results_df.to_csv(f'{predictions_dir}/results.csv')
+wandb.save(f'{predictions_dir}/results.csv')

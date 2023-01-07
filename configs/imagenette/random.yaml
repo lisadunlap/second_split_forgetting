@@ -21,4 +21,3 @@ hps:
 noise:
   p: 0.05
   method: random
-  clean_val: false

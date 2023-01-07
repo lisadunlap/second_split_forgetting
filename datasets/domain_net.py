@@ -34,7 +34,7 @@ class DomainNet(VisImageFolder):
             class_names = [s[0].split('/')[6] for s in samples]
             samples = [(s[0], self.classes.index(class_names[i])) for i, s in enumerate(samples) if class_names[i] in self.classes]
             if domain != 'real' and split == 'train':
-                samples = list(np.array(samples)[np.random.choice(list(range(len(samples))), 1000, replace=False)])
+                samples = list(np.array(samples)[np.random.choice(list(range(len(samples))), 200, replace=False)])
             elif split  != 'train':
                 balanced_samples = []
                 for j in range(len(self.classes)):

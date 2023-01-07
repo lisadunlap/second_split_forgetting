@@ -16,6 +16,3 @@ data:
 
 hps:
   lr: 0.01
-  warmup: 10
-  weight_decay: 5e-5
-  optimizer: adam

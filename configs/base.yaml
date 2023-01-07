@@ -1,10 +1,13 @@
 seed: 0
+proj: dynamic_weighting
 exp:
   run: 'clean'
-  num_epochs: 800
+  num_epochs: 200
   debug: false
   wandb: true
   oracle: false
+  class_weights: false
+  save_dir: 'data'
 
 model:
   arch: resnet50
@@ -15,6 +18,8 @@ model:
   eval: false
   load_stage: all # all, first-split, or second-split
   save_emb: false
+  weights: IMAGENET1K_V1
+  load_emb: false
 
 data:
   dataset: 'Waterbirds100'
@@ -34,7 +39,7 @@ hps:
   warmup: 10
   weight_decay: 5e-5
   optimizer: sgd
-  profile_freq: 10
+  profile_freq: 0 # when its 0 you only profile once after the warmup period
   num_profile_iterations: 5
 
 noise:
@@ -46,3 +51,9 @@ noise:
 profile: 
   method: Profiler
   metric: val balanced class acc
+
+select:
+  method: Selector
+  metric: fslt
+  mode: max
+  num_samples: 0.1

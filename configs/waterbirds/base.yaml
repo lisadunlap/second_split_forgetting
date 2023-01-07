@@ -6,6 +6,7 @@ data:
   dataset: Waterbirds95
   test_dataset: Waterbirds95
   root: '/shared/lisabdunlap/vl-attention/data'
+  upweight_factor: 5
 
 model:
   arch: resnet50

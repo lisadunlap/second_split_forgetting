@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 
-def calc_fslt(df):
+def fslt(df):
     """ First-Split Learning Time """
     df = df.sort_values('epoch', ascending=False)
     incorrect = df[df['prediction'] != df['label']]
@@ -11,7 +11,7 @@ def calc_fslt(df):
     else:
         return incorrect.iloc[0]['epoch'] + 1 # +1 because we want the first epoch where the model was correct
 
-def calc_ssft(df):
+def ssft(df):
     """ Second-Split Forgetting Time """
     df = df.sort_values('epoch', ascending=False)
     correct = df[df['prediction'] == df['label']]
@@ -20,7 +20,7 @@ def calc_ssft(df):
     else:
         return correct.iloc[0]['epoch'] + 1 # +1 because we want the first epoch where the model was incorrect
 
-def calc_num_forgetting(df):
+def num_forgetting(df):
     """ Number of Forgetting Events (when acc of example descreases b/t epochs)"""
     last_pred = -1
     num_forgetting = 0
@@ -32,7 +32,7 @@ def calc_num_forgetting(df):
         last_pred = row['prediction']
     return num_forgetting
 
-def calc_num_flips(df):
+def num_flips(df):
     """ Number of Flip Events (when pred of example changes b/t epochs)"""
     last_pred = -1
     num_forgetting = 0
@@ -44,19 +44,19 @@ def calc_num_flips(df):
         last_pred = row['prediction']
     return num_forgetting
 
-def calc_cumulative_learning(df):
+def cumulative_learning(df):
     """ Cumulative Learning Accuracy (sum of acc of example over epochs) """
     return len(df[df['prediction'] == df['label']])
 
-def calc_cumulative_confidence(df):
+def cumulative_confidence(df):
     """ Cumulative Learning Confidence (sum of confidence of example over epochs) """
     return df['conf'].sum()
 
-def calc_cumulative_loss(df):
+def cumulative_loss(df):
     """ Cumulative Loss (sum of loss of example over epochs) """
     return df['loss'].sum()
 
-def calc_conf_delta(df):
+def conf_delta(df):
     """ Sum of Differences in prediction confidence b/t epochs """
     last_conf = -1
     conf_delta = 0
@@ -68,7 +68,7 @@ def calc_conf_delta(df):
         last_conf = row['conf']
     return conf_delta
 
-def calc_num_loss_flips(df):
+def num_loss_flips(df):
     """ Number of time the loss goes up b/t epochs """
     last_loss = -1
     num_loss_flips = 0
@@ -80,6 +80,6 @@ def calc_num_loss_flips(df):
         last_loss = row['loss']
     return num_loss_flips
 
-def calc_max_loss_epoch(df):
+def max_loss_epoch(df):
     """ Epoch with the highest loss """
     return df[df['loss'] == df['loss'].max()]['epoch'].iloc[0]

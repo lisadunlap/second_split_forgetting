@@ -1,3 +1,4 @@
+proj: dynamic_weighting_imagenette_combined
 exp:
   run: expanded_imagenette-noisy-10
 
@@ -8,11 +9,13 @@ data:
 
 model:
   arch: resnet18
+  ft: true
+  save_emb: true
 
 noise:
   p: 0.1
   method: confusion_matrix
-  clean_val: false
+  clean_val: true
   confusion_matrix: predictions/ExpandedImagenette/confusion_matrix.npy
   # confusion_matrix: predictions/ExpandedImagenette/imagenette_combined_full/all/conf_matrix.npy
 
